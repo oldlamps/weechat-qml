@@ -1,0 +1,14 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# Documentation & internal state tracking
+GEMINI.md
+STATE.md
+
+# Editor & OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
