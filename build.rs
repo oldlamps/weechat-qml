@@ -39,6 +39,7 @@ fn main() {
     config.include(format!("{}/QtQml", include_dir));
     config.include(format!("{}/QtQuick", include_dir));
     config.include(format!("{}/QtQuickControls2", include_dir));
+    config.include(format!("{}/QtMultimedia", include_dir));
     config.build("src/main.rs");
 
     println!("cargo:rustc-link-search={}", lib_dir);
@@ -47,5 +48,6 @@ fn main() {
     println!("cargo:rustc-link-lib=Qt6Qml");
     println!("cargo:rustc-link-lib=Qt6Quick");
     println!("cargo:rustc-link-lib=Qt6QuickControls2");
+    println!("cargo:rustc-link-lib=Qt6Multimedia");
     println!("cargo:rerun-if-changed=qml/");
 }

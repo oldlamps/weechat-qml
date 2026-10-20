@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtMultimedia
 
 Item {
     id: msgRoot
@@ -10,7 +11,75 @@ Item {
     property var relayController
     property var theme
     property bool previewCollapsed: false
+    property bool isInlinePlaying: false
+    property string inlineStreamUrl: ""
+    property bool isResolvingStream: false
+    property string resolveError: ""
+    property string ytTitle: ""
+    property string ytAuthor: ""
+    property string resolvedImageUrl: ""
     signal nickClicked(string nick)
+
+    Connections {
+        target: relayController
+        function onMedia_stream_resolved(target_id, stream_url) {
+            if (target_id === model.line_ptr) {
+                msgRoot.isResolvingStream = false
+                msgRoot.resolveError = ""
+                msgRoot.inlineStreamUrl = stream_url
+                msgRoot.isInlinePlaying = true
+            }
+        }
+        function onMedia_stream_error(target_id, error_msg) {
+            if (target_id === model.line_ptr) {
+                msgRoot.isResolvingStream = false
+                msgRoot.resolveError = error_msg
+            }
+        }
+    }
+
+    function fetchMediaMetadata() {
+        if (model.media_type === "youtube" && model.media_url.length > 0 && msgRoot.ytTitle.length === 0) {
+            var xhr = new XMLHttpRequest()
+            xhr.open("GET", "https://www.youtube.com/oembed?url=" + encodeURIComponent(model.media_url) + "&format=json")
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
+                    try {
+                        var data = JSON.parse(xhr.responseText)
+                        if (data.title) msgRoot.ytTitle = data.title
+                        if (data.author_name) msgRoot.ytAuthor = data.author_name
+                    } catch (e) {}
+                }
+            }
+            xhr.send()
+        } else if (model.media_type === "image" && model.media_url.length > 0 && msgRoot.resolvedImageUrl.length === 0) {
+            var match = model.media_url.match(/https?:\/\/([^\/]+)\/wiki\/File:([^?#]+)/i)
+            if (match) {
+                var domain = match[1]
+                var fileTitle = decodeURIComponent(match[2])
+                var apiUrl = "https://" + domain + "/w/api.php?action=query&titles=File:" + encodeURIComponent(fileTitle) + "&prop=imageinfo&iiprop=url&format=json&origin=*"
+                var xhrImg = new XMLHttpRequest()
+                xhrImg.open("GET", apiUrl)
+                xhrImg.onreadystatechange = function() {
+                    if (xhrImg.readyState === XMLHttpRequest.DONE && xhrImg.status === 200) {
+                        try {
+                            var res = JSON.parse(xhrImg.responseText)
+                            var pages = res.query.pages
+                            for (var p in pages) {
+                                if (pages[p].imageinfo && pages[p].imageinfo.length > 0) {
+                                    msgRoot.resolvedImageUrl = pages[p].imageinfo[0].url
+                                    return
+                                }
+                            }
+                        } catch (e) {}
+                    }
+                }
+                xhrImg.send()
+            }
+        }
+    }
+
+    Component.onCompleted: fetchMediaMetadata()
 
     ColumnLayout {
         id: mainCol
@@ -220,12 +289,22 @@ Item {
                         }
                     }
 
-                    // Native QtQuick Image Preview Card (for direct image links)
+                    // Direct Image Preview Card
                     Rectangle {
-                        visible: relayController.show_media_previews && model.image_url.length > 0 && !msgRoot.previewCollapsed
+                        visible: relayController.show_media_previews && model.media_type === "image" && !msgRoot.previewCollapsed
                         Layout.topMargin: 6
-                        width: Math.min(380, parent.width)
-                        height: imgPreview.status === Image.Ready ? Math.min(240, imgPreview.implicitHeight * (width / Math.max(1, imgPreview.implicitWidth))) + 32 : 34
+                        Layout.preferredWidth: Math.min(420, msgRoot.width > 120 ? msgRoot.width - 100 : 420)
+                        Layout.preferredHeight: {
+                            if (imgPreview.status === Image.Ready) {
+                                return Math.min(280, imgPreview.implicitHeight * (Layout.preferredWidth / Math.max(1, imgPreview.implicitWidth))) + 32
+                            } else if (imgPreview.status === Image.Error) {
+                                return 68
+                            } else {
+                                return 74
+                            }
+                        }
+                        implicitWidth: Layout.preferredWidth
+                        implicitHeight: Layout.preferredHeight
                         radius: 8
                         color: theme.bgElevated
                         border.color: theme.borderSubtle
@@ -237,6 +316,7 @@ Item {
 
                             Rectangle {
                                 Layout.fillWidth: true
+                                Layout.preferredHeight: 28
                                 height: 28
                                 color: theme.bgSecondary
 
@@ -244,10 +324,16 @@ Item {
                                     anchors.fill: parent
                                     anchors.leftMargin: 10
                                     anchors.rightMargin: 10
+                                    spacing: 6
+
+                                    Text {
+                                        text: "🖼"
+                                        font.pixelSize: 11
+                                    }
 
                                     Text {
                                         Layout.fillWidth: true
-                                        text: model.image_url
+                                        text: model.media_url.length > 0 ? model.media_url : model.image_url
                                         color: theme.textSecondary
                                         font.pixelSize: 11
                                         elide: Text.ElideMiddle
@@ -266,18 +352,438 @@ Item {
                                 }
                             }
 
-                            Image {
-                                id: imgPreview
+                            Item {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                source: relayController.show_media_previews ? model.image_url : ""
-                                fillMode: Image.PreserveAspectFit
-                                asynchronous: true
 
-                                MouseArea {
+                                // Loading Placeholder
+                                Item {
                                     anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: Qt.openUrlExternally(model.image_url)
+                                    visible: imgPreview.status === Image.Loading || (model.media_url.indexOf("/wiki/File:") !== -1 && msgRoot.resolvedImageUrl.length === 0)
+
+                                    RowLayout {
+                                        anchors.centerIn: parent
+                                        spacing: 6
+                                        Text {
+                                            text: "⏳"
+                                            font.pixelSize: 12
+                                        }
+                                        Text {
+                                            text: "Loading image preview..."
+                                            color: theme.textMuted
+                                            font.pixelSize: 11
+                                        }
+                                    }
+                                }
+
+                                // Error Placeholder
+                                Item {
+                                    anchors.fill: parent
+                                    visible: imgPreview.status === Image.Error && !(model.media_url.indexOf("/wiki/File:") !== -1 && msgRoot.resolvedImageUrl.length === 0)
+
+                                    RowLayout {
+                                        anchors.centerIn: parent
+                                        spacing: 8
+                                        Text {
+                                            text: "⚠️ Could not load image"
+                                            color: theme.badgeHighlight
+                                            font.pixelSize: 11
+                                        }
+                                        Text {
+                                            text: "Open in Browser ↗"
+                                            color: theme.accentCyan
+                                            font.pixelSize: 11
+                                            font.underline: true
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: Qt.openUrlExternally(model.media_url.length > 0 ? model.media_url : model.image_url)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Image {
+                                    id: imgPreview
+                                    anchors.fill: parent
+                                    source: (relayController.show_media_previews && model.media_type === "image")
+                                        ? (msgRoot.resolvedImageUrl.length > 0
+                                            ? msgRoot.resolvedImageUrl
+                                            : (model.media_url.indexOf("/wiki/File:") !== -1 ? "" : (model.media_url.length > 0 ? model.media_url : model.image_url)))
+                                        : ""
+                                    fillMode: Image.PreserveAspectFit
+                                    asynchronous: true
+                                    visible: status === Image.Ready
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: Qt.openUrlExternally(msgRoot.resolvedImageUrl.length > 0 ? msgRoot.resolvedImageUrl : (model.media_url.length > 0 ? model.media_url : model.image_url))
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // YouTube Video Preview Card
+                    Rectangle {
+                        visible: relayController.show_media_previews && model.media_type === "youtube" && !msgRoot.previewCollapsed
+                        Layout.topMargin: 6
+                        Layout.preferredWidth: Math.min(440, msgRoot.width > 120 ? msgRoot.width - 100 : 440)
+                        Layout.preferredHeight: msgRoot.isInlinePlaying ? 300 : 255
+                        implicitWidth: Layout.preferredWidth
+                        implicitHeight: Layout.preferredHeight
+                        radius: 8
+                        color: theme.bgElevated
+                        border.color: theme.borderSubtle
+                        clip: true
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            spacing: 0
+
+                            // Top Header Strip
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 30
+                                height: 30
+                                color: theme.bgSecondary
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    spacing: 8
+
+                                    // YouTube Red Badge
+                                    Rectangle {
+                                        width: 62
+                                        height: 18
+                                        radius: 4
+                                        color: "#cc0000"
+
+                                        RowLayout {
+                                            anchors.centerIn: parent
+                                            spacing: 3
+                                            Text {
+                                                text: "▶"
+                                                color: "#ffffff"
+                                                font.pixelSize: 8
+                                            }
+                                            Text {
+                                                text: "YouTube"
+                                                color: "#ffffff"
+                                                font.pixelSize: 10
+                                                font.bold: true
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: msgRoot.ytTitle.length > 0 ? msgRoot.ytTitle : model.media_url
+                                        color: theme.textPrimary
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        text: "Hide"
+                                        color: theme.textMuted
+                                        font.pixelSize: 11
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                msgRoot.isInlinePlaying = false
+                                                msgRoot.previewCollapsed = true
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Middle Media Area (Thumbnail or Inline Video)
+                            Item {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+
+                                // Thumbnail & Play Button Mode
+                                Item {
+                                    anchors.fill: parent
+                                    visible: !msgRoot.isInlinePlaying
+
+                                    Image {
+                                        id: ytThumb
+                                        anchors.fill: parent
+                                        source: model.media_thumbnail
+                                        fillMode: Image.PreserveAspectCrop
+                                        asynchronous: true
+                                        onStatusChanged: {
+                                            if (status === Image.Error && source.toString().indexOf("hqdefault.jpg") !== -1 && model.media_id.length > 0) {
+                                                source = "https://img.youtube.com/vi/" + model.media_id + "/mqdefault.jpg"
+                                            }
+                                        }
+                                    }
+
+                                    // Dark tint overlay on hover
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        color: ytThumbHover.hovered ? "#44000000" : "#22000000"
+                                    }
+
+                                    // Centered Glowing Red Play Button
+                                    Rectangle {
+                                        width: 56
+                                        height: 38
+                                        radius: 12
+                                        anchors.centerIn: parent
+                                        color: ytThumbHover.hovered ? "#eeff0000" : "#ccff0000"
+                                        scale: ytThumbHover.hovered ? 1.08 : 1.0
+
+                                        Behavior on scale { NumberAnimation { duration: 120 } }
+                                        Behavior on color { ColorAnimation { duration: 120 } }
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            anchors.horizontalCenterOffset: 1
+                                            text: "▶"
+                                            color: "#ffffff"
+                                            font.pixelSize: 18
+                                        }
+                                    }
+
+                                    // Channel Author Pill
+                                    Rectangle {
+                                        visible: msgRoot.ytAuthor.length > 0
+                                        anchors.left: parent.left
+                                        anchors.bottom: parent.bottom
+                                        anchors.leftMargin: 8
+                                        anchors.bottomMargin: 8
+                                        height: 20
+                                        implicitWidth: ytAuthTxt.implicitWidth + 12
+                                        radius: 4
+                                        color: "#bb000000"
+
+                                        Text {
+                                            id: ytAuthTxt
+                                            anchors.centerIn: parent
+                                            text: msgRoot.ytAuthor
+                                            color: "#ffffff"
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                        }
+                                    }
+
+                                    HoverHandler { id: ytThumbHover }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (!msgRoot.isResolvingStream) {
+                                                msgRoot.isResolvingStream = true
+                                                msgRoot.resolveError = ""
+                                                relayController.resolve_media_stream(model.media_url, model.line_ptr)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Inline Video Player Mode
+                                Item {
+                                    anchors.fill: parent
+                                    visible: msgRoot.isInlinePlaying
+
+                                    MediaPlayer {
+                                        id: inlinePlayer
+                                        videoOutput: videoOut
+                                        source: msgRoot.inlineStreamUrl
+                                    }
+
+                                    VideoOutput {
+                                        id: videoOut
+                                        anchors.fill: parent
+                                    }
+
+                                    // Video Controls Bar (bottom overlay)
+                                    Rectangle {
+                                        anchors.bottom: parent.bottom
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        height: 36
+                                        color: "#dd000000"
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 8
+                                            anchors.rightMargin: 8
+                                            spacing: 8
+
+                                            Text {
+                                                text: inlinePlayer.playbackState === MediaPlayer.PlayingState ? "⏸" : "▶"
+                                                color: "#ffffff"
+                                                font.pixelSize: 14
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (inlinePlayer.playbackState === MediaPlayer.PlayingState) {
+                                                            inlinePlayer.pause()
+                                                        } else {
+                                                            inlinePlayer.play()
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Slider {
+                                                Layout.fillWidth: true
+                                                from: 0
+                                                to: Math.max(1, inlinePlayer.duration)
+                                                value: inlinePlayer.position
+                                                onMoved: inlinePlayer.position = value
+                                            }
+
+                                            Text {
+                                                text: {
+                                                    var curS = Math.floor(inlinePlayer.position / 1000)
+                                                    var totS = Math.floor(inlinePlayer.duration / 1000)
+                                                    var curM = Math.floor(curS / 60)
+                                                    var totM = Math.floor(totS / 60)
+                                                    return curM + ":" + (curS % 60 < 10 ? "0" : "") + (curS % 60) + " / " + totM + ":" + (totS % 60 < 10 ? "0" : "") + (totS % 60)
+                                                }
+                                                color: "#ffffff"
+                                                font.pixelSize: 10
+                                                font.family: theme.fontMono
+                                            }
+
+                                            Text {
+                                                text: "✕"
+                                                color: "#ffffff"
+                                                font.pixelSize: 12
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        inlinePlayer.stop()
+                                                        msgRoot.isInlinePlaying = false
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Bottom Action Strip (Buttons for Play, MPV, Browser)
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 34
+                                height: 34
+                                color: theme.bgSecondary
+                                visible: !msgRoot.isInlinePlaying
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    spacing: 8
+
+                                    // Play Inline button
+                                    Rectangle {
+                                        height: 24
+                                        implicitWidth: playInlineTxt.implicitWidth + 16
+                                        radius: 4
+                                        color: playInlHover.hovered ? theme.bgHover : theme.bgElevated
+                                        border.color: theme.borderSubtle
+
+                                        Text {
+                                            id: playInlineTxt
+                                            anchors.centerIn: parent
+                                            text: msgRoot.isResolvingStream ? "⏳ Resolving..." : "▶ Play Inline"
+                                            color: theme.accentCyan
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                        }
+
+                                        HoverHandler { id: playInlHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (!msgRoot.isResolvingStream) {
+                                                    msgRoot.isResolvingStream = true
+                                                    msgRoot.resolveError = ""
+                                                    relayController.resolve_media_stream(model.media_url, model.line_ptr)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // MPV button
+                                    Rectangle {
+                                        height: 24
+                                        implicitWidth: mpvTxt.implicitWidth + 16
+                                        radius: 4
+                                        color: mpvHover.hovered ? theme.bgHover : theme.bgElevated
+                                        border.color: theme.borderSubtle
+
+                                        Text {
+                                            id: mpvTxt
+                                            anchors.centerIn: parent
+                                            text: "▶ MPV"
+                                            color: theme.accentPrimary
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                        }
+
+                                        HoverHandler { id: mpvHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: relayController.play_with_mpv(model.media_url)
+                                        }
+                                    }
+
+                                    // Status / Error message or spacer
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: msgRoot.resolveError.length > 0
+                                        text: msgRoot.resolveError
+                                        color: theme.badgeHighlight
+                                        font.pixelSize: 10
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                        visible: msgRoot.resolveError.length === 0
+                                    }
+
+                                    // Open in Browser button
+                                    Rectangle {
+                                        height: 24
+                                        implicitWidth: openTxt.implicitWidth + 14
+                                        radius: 4
+                                        color: openHover.hovered ? theme.bgHover : theme.bgElevated
+                                        border.color: theme.borderSubtle
+
+                                        Text {
+                                            id: openTxt
+                                            anchors.centerIn: parent
+                                            text: "Open ↗"
+                                            color: theme.textSecondary
+                                            font.pixelSize: 10
+                                        }
+
+                                        HoverHandler { id: openHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: Qt.openUrlExternally(model.media_url)
+                                        }
+                                    }
                                 }
                             }
                         }

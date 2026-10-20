@@ -31,6 +31,10 @@ pub struct MessageItem {
     pub is_system: bool,
     pub is_grouped: bool,
     pub image_url: QString,
+    pub media_type: QString,
+    pub media_url: QString,
+    pub media_thumbnail: QString,
+    pub media_id: QString,
     pub matches_search: bool,
 }
 

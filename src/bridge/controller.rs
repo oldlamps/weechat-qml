@@ -123,6 +123,10 @@ pub struct RelayController {
     pub complete_input: qt_method!(fn(&mut self, text: QString, cursor_pos: i32) -> QString),
     pub open_query_with_nick: qt_method!(fn(&mut self, nick: QString)),
     pub whois_nick: qt_method!(fn(&mut self, nick: QString)),
+    pub play_with_mpv: qt_method!(fn(&mut self, url: QString)),
+    pub resolve_media_stream: qt_method!(fn(&mut self, media_url: QString, target_id: QString)),
+    pub media_stream_resolved: qt_signal!(target_id: QString, stream_url: QString),
+    pub media_stream_error: qt_signal!(target_id: QString, error_msg: QString),
 
     // Persistent Server Manager Methods
     pub load_servers: qt_method!(fn(&mut self)),
@@ -355,6 +359,10 @@ impl Default for RelayController {
             complete_input: Default::default(),
             open_query_with_nick: Default::default(),
             whois_nick: Default::default(),
+            play_with_mpv: Default::default(),
+            resolve_media_stream: Default::default(),
+            media_stream_resolved: Default::default(),
+            media_stream_error: Default::default(),
             load_servers: Default::default(),
             connect_server_profile: Default::default(),
             save_server_profile: Default::default(),
@@ -1441,6 +1449,81 @@ impl RelayController {
         }
     }
 
+    pub fn play_with_mpv(&mut self, url: QString) {
+        let u = url.to_string();
+        if u.is_empty() {
+            return;
+        }
+        std::thread::spawn(move || {
+            let res = std::process::Command::new("mpv").arg(&u).spawn();
+            if res.is_err() {
+                let _ = std::process::Command::new("xdg-open").arg(&u).spawn();
+            }
+        });
+    }
+
+    pub fn resolve_media_stream(&mut self, media_url: QString, target_id: QString) {
+        let u = media_url.to_string();
+        let tid = target_id.to_string();
+        if u.is_empty() {
+            return;
+        }
+
+        let qptr = QPointer::from(&*self);
+        let on_resolved = qmetaobject::queued_callback(move |(id, stream): (String, String)| {
+            if let Some(this) = qptr.as_pinned() {
+                this.borrow()
+                    .media_stream_resolved(id.into(), stream.into());
+            }
+        });
+        let qptr2 = QPointer::from(&*self);
+        let on_error = qmetaobject::queued_callback(move |(id, err): (String, String)| {
+            if let Some(this) = qptr2.as_pinned() {
+                this.borrow().media_stream_error(id.into(), err.into());
+            }
+        });
+
+        std::thread::spawn(move || {
+            let output = std::process::Command::new("yt-dlp")
+                .args([
+                    "-g",
+                    "-f",
+                    "best[height<=720][ext=mp4]/best[ext=mp4]/best",
+                    &u,
+                ])
+                .output();
+
+            match output {
+                Ok(out) if out.status.success() => {
+                    let stream = String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if !stream.is_empty() {
+                        on_resolved((tid, stream));
+                    } else {
+                        on_error((tid, "yt-dlp returned an empty stream URL".to_string()));
+                    }
+                }
+                Ok(out) => {
+                    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    let msg = if err.is_empty() {
+                        "yt-dlp failed to resolve stream URL".to_string()
+                    } else {
+                        err
+                    };
+                    on_error((tid, msg));
+                }
+                Err(e) => {
+                    let err = format!("yt-dlp not available: {}", e);
+                    on_error((tid, err));
+                }
+            }
+        });
+    }
+
     pub fn complete_input(&mut self, text: QString, cursor_pos: i32) -> QString {
         let input = text.to_string();
         let cursor = (cursor_pos.max(0) as usize).min(input.len());
@@ -1719,6 +1802,10 @@ impl RelayController {
             is_system,
             is_grouped,
             image_url: formatted.image_url.into(),
+            media_type: formatted.media.media_type.into(),
+            media_url: formatted.media.media_url.into(),
+            media_thumbnail: formatted.media.thumbnail_url.into(),
+            media_id: formatted.media.video_id.into(),
             matches_search,
         }
     }
