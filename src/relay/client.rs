@@ -100,6 +100,10 @@ pub enum RelayEvent {
     LineAdded(RelayLine),
     BufferOpened(RelayBuffer),
     BufferUpdated(RelayBuffer),
+    BufferMoved {
+        buffer_ptr: String,
+        number: i32,
+    },
     BufferRenamed {
         buffer_ptr: String,
         full_name: String,
@@ -481,6 +485,26 @@ async fn handle_incoming_message(
                         buf.ptr = super::types::normalize_ptr(buf_ptr);
                     }
                     let _ = event_tx.send(RelayEvent::BufferUpdated(buf));
+                }
+            }
+        }
+    } else if id == "_buffer_moved" {
+        for obj in &msg.objects {
+            if let RelayValue::Hdata(hda) = obj {
+                for item in &hda.items {
+                    let ptr = super::types::normalize_ptr(item.first_ptr());
+                    let number = item.get_i32("number");
+                    let wire_info = format!(
+                        "(bufinfo:{}) hdata buffer:{} number,full_name,short_name,type,nicklist,title,local_variables,notify",
+                        ptr, ptr
+                    );
+                    let _ = write_relay_command(stream, &wire_info).await;
+                    if number > 0 {
+                        let _ = event_tx.send(RelayEvent::BufferMoved {
+                            buffer_ptr: ptr,
+                            number,
+                        });
+                    }
                 }
             }
         }

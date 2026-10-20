@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub timestamp_format: String,
     pub initial_lines_fetch: i32,
     pub auto_reconnect: bool,
+    #[serde(default)]
+    pub sidebar_server_order: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -36,6 +38,7 @@ impl Default for AppConfig {
             timestamp_format: "%H:%M".to_string(),
             initial_lines_fetch: 150,
             auto_reconnect: true,
+            sidebar_server_order: Vec::new(),
         }
     }
 }
@@ -73,6 +76,15 @@ impl AppConfig {
         if self.port == 0 {
             self.port = defaults.port;
         }
+
+        let mut clean_order = Vec::new();
+        for s in self.sidebar_server_order.drain(..) {
+            let trimmed = s.trim().to_lowercase();
+            if !trimmed.is_empty() && !clean_order.contains(&trimmed) {
+                clean_order.push(trimmed);
+            }
+        }
+        self.sidebar_server_order = clean_order;
     }
 
     pub fn load() -> Self {
@@ -117,6 +129,11 @@ mod tests {
             timestamp_format: "".to_string(),
             initial_lines_fetch: -5,
             auto_reconnect: false,
+            sidebar_server_order: vec![
+                "Libera".to_string(),
+                " LIBERA ".to_string(),
+                "".to_string(),
+            ],
         };
 
         cfg.sanitize();
@@ -129,6 +146,7 @@ mod tests {
         assert_eq!(cfg.font_size, defaults.font_size);
         assert_eq!(cfg.timestamp_format, defaults.timestamp_format);
         assert_eq!(cfg.initial_lines_fetch, defaults.initial_lines_fetch);
+        assert_eq!(cfg.sidebar_server_order, vec!["libera".to_string()]);
         // Valid boolean changes must be preserved
         assert!(cfg.use_tls);
         assert!(!cfg.verify_tls);

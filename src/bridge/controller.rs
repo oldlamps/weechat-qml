@@ -103,6 +103,7 @@ pub struct RelayController {
     pub select_next_buffer: qt_method!(fn(&mut self)),
     pub select_previous_buffer: qt_method!(fn(&mut self)),
     pub select_buffer_by_number: qt_method!(fn(&mut self, number: i32)),
+    pub select_buffer_by_filtered_index: qt_method!(fn(&mut self, index: i32) -> bool),
     pub send_input: qt_method!(fn(&mut self, text: QString)),
     pub load_more_history: qt_method!(fn(&mut self)),
     pub toggle_join_part_quit: qt_method!(fn(&mut self)),
@@ -155,53 +156,120 @@ pub struct RelayController {
     buffer_filter_query: String,
     message_search_query: String,
     server_store: ServerStore,
+    sidebar_server_order: Vec<String>,
 }
 
-fn sort_buffers_by_server_and_number(buffers: &mut Vec<RelayBuffer>) {
+pub fn sort_buffers_by_server_and_number(
+    buffers: &mut Vec<RelayBuffer>,
+    server_order: &mut Vec<String>,
+) {
     if buffers.is_empty() {
         return;
     }
 
-    // Group by lowercase trimmed server name
+    // 1. Group by lowercase trimmed server name
     let mut groups: HashMap<String, Vec<RelayBuffer>> = HashMap::new();
     for buf in buffers.drain(..) {
-        let key = buf.server_name.trim().to_lowercase();
+        let raw_key = buf.server_name.trim().to_lowercase();
+        let key = if raw_key.is_empty() || raw_key == "core" {
+            "weechat".to_string()
+        } else {
+            raw_key
+        };
         groups.entry(key).or_default().push(buf);
     }
 
-    // Sort each group internally by buffer number
-    // And determine the group's min buffer number & canonical server name
-    let mut group_list: Vec<(i32, String, Vec<RelayBuffer>)> = Vec::new();
-    for (_key, mut items) in groups {
-        items.sort_by_key(|b| b.number);
-        let min_number = items.first().map(|b| b.number).unwrap_or(i32::MAX);
+    // 2. Sort each group internally:
+    // Positive buffer numbers in ascending order; 0 or negative numbers at the end.
+    // Within same number, server buffers come before channels, then by short_name.
+    let mut group_info_map: HashMap<String, (i32, String, Vec<RelayBuffer>)> = HashMap::new();
 
-        // Pick the best canonical server name from items:
-        // Prefer one with uppercase first letter if available, else first item's server_name
-        let canonical_name = items
+    for (key, mut items) in groups {
+        items.sort_by(|a, b| {
+            let a_is_srv = a.buffer_type == "server";
+            let b_is_srv = b.buffer_type == "server";
+
+            let a_num = if a.number > 0 { a.number } else { i32::MAX };
+            let b_num = if b.number > 0 { b.number } else { i32::MAX };
+
+            a_num
+                .cmp(&b_num)
+                .then_with(|| b_is_srv.cmp(&a_is_srv))
+                .then_with(|| {
+                    a.short_name
+                        .to_lowercase()
+                        .cmp(&b.short_name.to_lowercase())
+                })
+        });
+
+        let min_pos_number = items
             .iter()
-            .find(|b| {
-                b.server_name
-                    .chars()
-                    .next()
-                    .map(|c| c.is_uppercase())
-                    .unwrap_or(false)
-            })
-            .map(|b| b.server_name.clone())
-            .unwrap_or_else(|| items[0].server_name.clone());
+            .filter(|b| b.number > 0)
+            .map(|b| b.number)
+            .min()
+            .unwrap_or(i32::MAX);
+
+        let canonical_name = if key == "weechat" {
+            "WeeChat".to_string()
+        } else {
+            items
+                .iter()
+                .find(|b| {
+                    b.server_name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                })
+                .map(|b| b.server_name.clone())
+                .unwrap_or_else(|| items[0].server_name.clone())
+        };
 
         for b in &mut items {
             b.server_name = canonical_name.clone();
         }
 
-        group_list.push((min_number, canonical_name, items));
+        group_info_map.insert(key, (min_pos_number, canonical_name, items));
     }
 
-    // Sort groups by their minimum buffer number
-    group_list.sort_by_key(|(min_num, _, _)| *min_num);
+    // 3. Ensure "weechat" is always first in server_order if present
+    if !server_order.contains(&"weechat".to_string()) {
+        server_order.insert(0, "weechat".to_string());
+    }
+
+    // 4. Find all server keys in group_info_map that are NOT yet in server_order
+    let mut new_keys: Vec<String> = group_info_map
+        .keys()
+        .filter(|k| !server_order.contains(k))
+        .cloned()
+        .collect();
+
+    // Sort newly discovered servers by minimum positive buffer number, then alphabetically
+    new_keys.sort_by(|a, b| {
+        let (min_a, _, _) = &group_info_map[a];
+        let (min_b, _, _) = &group_info_map[b];
+        min_a.cmp(min_b).then_with(|| a.cmp(b))
+    });
+
+    server_order.extend(new_keys);
+
+    // 5. Order groups strictly according to their established index in server_order
+    let mut ordered_groups: Vec<(usize, String, Vec<RelayBuffer>)> = Vec::new();
+    for (order_idx, key) in server_order.iter().enumerate() {
+        if let Some((_, canonical_name, items)) = group_info_map.remove(key) {
+            ordered_groups.push((order_idx, canonical_name, items));
+        }
+    }
+
+    // Any remaining items (if any) placed at the end
+    for (_, (_, canonical_name, items)) in group_info_map {
+        ordered_groups.push((usize::MAX, canonical_name, items));
+    }
+
+    ordered_groups.sort_by_key(|(idx, _, _)| *idx);
 
     // Flatten back into buffers
-    for (_, _, items) in group_list {
+    for (_, _, items) in ordered_groups {
         buffers.extend(items);
     }
 }
@@ -267,6 +335,7 @@ impl Default for RelayController {
             select_next_buffer: Default::default(),
             select_previous_buffer: Default::default(),
             select_buffer_by_number: Default::default(),
+            select_buffer_by_filtered_index: Default::default(),
             send_input: Default::default(),
             load_more_history: Default::default(),
             toggle_join_part_quit: Default::default(),
@@ -300,6 +369,7 @@ impl Default for RelayController {
             buffer_filter_query: String::new(),
             message_search_query: String::new(),
             server_store: ServerStore::default(),
+            sidebar_server_order: Vec::new(),
         };
         let cfg = AppConfig::load();
         controller.apply_config(&cfg);
@@ -322,6 +392,7 @@ impl RelayController {
         self.timestamp_format = cfg.timestamp_format.clone().into();
         self.initial_lines_fetch = cfg.initial_lines_fetch;
         self.auto_reconnect = cfg.auto_reconnect;
+        self.sidebar_server_order = cfg.sidebar_server_order.clone();
     }
 
     pub fn init_controller(&mut self) {
@@ -521,8 +592,8 @@ impl RelayController {
                 for b in &mut buffers {
                     b.ptr = normalize_ptr(&b.ptr);
                 }
-                sort_buffers_by_server_and_number(&mut buffers);
                 self.buffers_cache = buffers;
+                self.sort_buffers();
                 self.rebuild_buffer_model();
 
                 let active_norm = normalize_ptr(&self.active_buffer_ptr.to_string());
@@ -635,12 +706,24 @@ impl RelayController {
                 buf.ptr = normalize_ptr(&buf.ptr);
                 let mut active_changed = false;
                 if let Some(existing) = self.buffers_cache.iter_mut().find(|b| b.ptr == buf.ptr) {
-                    existing.number = buf.number;
-                    existing.full_name = buf.full_name;
-                    existing.short_name = buf.short_name;
-                    existing.server_name = buf.server_name;
-                    existing.buffer_type = buf.buffer_type;
-                    existing.title = buf.title;
+                    if buf.number > 0 {
+                        existing.number = buf.number;
+                    }
+                    if !buf.full_name.is_empty() {
+                        existing.full_name = buf.full_name;
+                    }
+                    if !buf.short_name.is_empty() {
+                        existing.short_name = buf.short_name;
+                    }
+                    if !buf.server_name.is_empty() {
+                        existing.server_name = buf.server_name;
+                    }
+                    if !buf.buffer_type.is_empty() {
+                        existing.buffer_type = buf.buffer_type;
+                    }
+                    if !buf.title.is_empty() {
+                        existing.title = buf.title;
+                    }
                     existing.notify_level = buf.notify_level;
                     existing.local_vars.extend(buf.local_vars);
 
@@ -655,8 +738,8 @@ impl RelayController {
                     }
                 } else {
                     self.buffers_cache.push(buf);
-                    sort_buffers_by_server_and_number(&mut self.buffers_cache);
                 }
+                self.sort_buffers();
                 self.rebuild_buffer_model();
                 if active_changed {
                     self.active_buffer_changed();
@@ -666,12 +749,24 @@ impl RelayController {
                 buf.ptr = normalize_ptr(&buf.ptr);
                 let mut active_changed = false;
                 if let Some(existing) = self.buffers_cache.iter_mut().find(|b| b.ptr == buf.ptr) {
-                    existing.number = buf.number;
-                    existing.full_name = buf.full_name;
-                    existing.short_name = buf.short_name;
-                    existing.server_name = buf.server_name;
-                    existing.buffer_type = buf.buffer_type;
-                    existing.title = buf.title;
+                    if buf.number > 0 {
+                        existing.number = buf.number;
+                    }
+                    if !buf.full_name.is_empty() {
+                        existing.full_name = buf.full_name;
+                    }
+                    if !buf.short_name.is_empty() {
+                        existing.short_name = buf.short_name;
+                    }
+                    if !buf.server_name.is_empty() {
+                        existing.server_name = buf.server_name;
+                    }
+                    if !buf.buffer_type.is_empty() {
+                        existing.buffer_type = buf.buffer_type;
+                    }
+                    if !buf.title.is_empty() {
+                        existing.title = buf.title;
+                    }
                     existing.notify_level = buf.notify_level;
                     existing.local_vars.extend(buf.local_vars);
 
@@ -686,12 +781,22 @@ impl RelayController {
                     }
                 } else {
                     self.buffers_cache.push(buf);
-                    sort_buffers_by_server_and_number(&mut self.buffers_cache);
                 }
+                self.sort_buffers();
                 self.rebuild_buffer_model();
                 if active_changed {
                     self.active_buffer_changed();
                 }
+            }
+            RelayEvent::BufferMoved { buffer_ptr, number } => {
+                let norm_ptr = normalize_ptr(&buffer_ptr);
+                if number > 0
+                    && let Some(b) = self.buffers_cache.iter_mut().find(|b| b.ptr == norm_ptr)
+                {
+                    b.number = number;
+                }
+                self.sort_buffers();
+                self.rebuild_buffer_model();
             }
             RelayEvent::BufferRenamed {
                 buffer_ptr,
@@ -718,7 +823,7 @@ impl RelayController {
                         type_or_name_changed = true;
                     }
                 }
-                sort_buffers_by_server_and_number(&mut self.buffers_cache);
+                self.sort_buffers();
                 self.rebuild_buffer_model();
                 if type_or_name_changed {
                     self.active_buffer_changed();
@@ -742,6 +847,7 @@ impl RelayController {
                         active_changed = true;
                     }
                 }
+                self.sort_buffers();
                 self.rebuild_buffer_model();
                 if active_changed {
                     self.active_buffer_changed();
@@ -1176,6 +1282,25 @@ impl RelayController {
         }
     }
 
+    pub fn select_buffer_by_filtered_index(&mut self, index: i32) -> bool {
+        if index < 0 {
+            return false;
+        }
+        let ptr = {
+            let model = self.buffer_model.borrow();
+            model
+                .iter()
+                .nth(index as usize)
+                .map(|item| item.ptr.clone())
+        };
+        if let Some(ptr) = ptr {
+            self.select_buffer(ptr);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn send_input(&mut self, text: QString) {
         let raw = text.to_string();
         if raw.trim().is_empty() {
@@ -1280,7 +1405,7 @@ impl RelayController {
     }
 
     pub fn filter_buffers(&mut self, query: QString) {
-        self.buffer_filter_query = query.to_string().to_lowercase();
+        self.buffer_filter_query = query.to_string().trim().to_lowercase();
         self.rebuild_buffer_model();
     }
 
@@ -1389,7 +1514,8 @@ impl RelayController {
                 let matches = filter.is_empty()
                     || b.short_name.to_lowercase().contains(filter)
                     || b.server_name.to_lowercase().contains(filter)
-                    || b.full_name.to_lowercase().contains(filter);
+                    || b.full_name.to_lowercase().contains(filter)
+                    || (b.number > 0 && b.number.to_string() == *filter);
 
                 if !matches {
                     return None;
@@ -1639,6 +1765,14 @@ impl RelayController {
         self.nick_count_changed();
     }
 
+    fn sort_buffers(&mut self) {
+        let prev_order = self.sidebar_server_order.clone();
+        sort_buffers_by_server_and_number(&mut self.buffers_cache, &mut self.sidebar_server_order);
+        if self.sidebar_server_order != prev_order {
+            self.save_current_config();
+        }
+    }
+
     fn save_current_config(&self) {
         let cfg = AppConfig {
             host: self.saved_host.to_string(),
@@ -1654,6 +1788,7 @@ impl RelayController {
             timestamp_format: self.timestamp_format.to_string(),
             initial_lines_fetch: self.initial_lines_fetch,
             auto_reconnect: self.auto_reconnect,
+            sidebar_server_order: self.sidebar_server_order.clone(),
         };
         cfg.save();
     }
@@ -1770,7 +1905,8 @@ mod tests {
             },
         ];
 
-        sort_buffers_by_server_and_number(&mut buffers);
+        let mut order = Vec::new();
+        sort_buffers_by_server_and_number(&mut buffers, &mut order);
 
         // WeeChat (number 1) should be first
         assert_eq!(buffers[0].number, 1);
@@ -1789,6 +1925,150 @@ mod tests {
         assert_eq!(buffers[4].server_name, "OFTC");
         assert_eq!(buffers[5].number, 5);
         assert_eq!(buffers[5].server_name, "OFTC");
+
+        // Order should be saved as ["weechat", "libera", "oftc"]
+        assert_eq!(order, vec!["weechat", "libera", "oftc"]);
+    }
+
+    #[test]
+    fn test_persistent_server_order_on_new_channel_join() {
+        let mut buffers = vec![
+            RelayBuffer {
+                ptr: "0x1".to_string(),
+                number: 1,
+                full_name: "core.weechat".to_string(),
+                short_name: "weechat".to_string(),
+                server_name: "WeeChat".to_string(),
+                buffer_type: "core".to_string(),
+                title: String::new(),
+                notify_level: 0,
+                local_vars: HashMap::new(),
+            },
+            RelayBuffer {
+                ptr: "0x2".to_string(),
+                number: 2,
+                full_name: "irc.libera.#rust".to_string(),
+                short_name: "#rust".to_string(),
+                server_name: "Libera".to_string(),
+                buffer_type: "channel".to_string(),
+                title: String::new(),
+                notify_level: 0,
+                local_vars: HashMap::new(),
+            },
+            RelayBuffer {
+                ptr: "0x3".to_string(),
+                number: 3,
+                full_name: "irc.oftc.#debian".to_string(),
+                short_name: "#debian".to_string(),
+                server_name: "OFTC".to_string(),
+                buffer_type: "channel".to_string(),
+                title: String::new(),
+                notify_level: 0,
+                local_vars: HashMap::new(),
+            },
+        ];
+
+        let mut order = Vec::new();
+        sort_buffers_by_server_and_number(&mut buffers, &mut order);
+        assert_eq!(order, vec!["weechat", "libera", "oftc"]);
+
+        // Simulate joining a new channel on OFTC where buffer number is initially 0 (not yet assigned)
+        buffers.push(RelayBuffer {
+            ptr: "0x4".to_string(),
+            number: 0, // Freshly opened, no number yet
+            full_name: "irc.oftc.#kernel".to_string(),
+            short_name: "#kernel".to_string(),
+            server_name: "OFTC".to_string(),
+            buffer_type: "channel".to_string(),
+            title: String::new(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        });
+
+        sort_buffers_by_server_and_number(&mut buffers, &mut order);
+
+        // Crucial invariant: OFTC must NOT move above Libera or WeeChat!
+        assert_eq!(buffers[0].server_name, "WeeChat");
+        assert_eq!(buffers[1].server_name, "Libera");
+        assert_eq!(buffers[1].short_name, "#rust");
+        assert_eq!(buffers[2].server_name, "OFTC");
+        assert_eq!(buffers[2].short_name, "#debian");
+        assert_eq!(buffers[3].server_name, "OFTC");
+        assert_eq!(buffers[3].short_name, "#kernel");
+        assert_eq!(order, vec!["weechat", "libera", "oftc"]);
+
+        // Now simulate WeeChat updating the number to 4 via BufferMoved/BufferUpdated
+        buffers[3].number = 4;
+        sort_buffers_by_server_and_number(&mut buffers, &mut order);
+        assert_eq!(buffers[0].server_name, "WeeChat");
+        assert_eq!(buffers[1].server_name, "Libera");
+        assert_eq!(buffers[2].server_name, "OFTC");
+        assert_eq!(buffers[3].server_name, "OFTC");
+        assert_eq!(buffers[3].number, 4);
+    }
+
+    #[test]
+    fn test_select_buffer_by_filtered_index_and_number_filtering() {
+        let mut controller = RelayController::default();
+        let buffers = vec![
+            RelayBuffer {
+                ptr: "0x1".to_string(),
+                number: 1,
+                full_name: "core.weechat".to_string(),
+                short_name: "weechat".to_string(),
+                server_name: "WeeChat".to_string(),
+                buffer_type: "core".to_string(),
+                title: String::new(),
+                notify_level: 0,
+                local_vars: HashMap::new(),
+            },
+            RelayBuffer {
+                ptr: "0x2".to_string(),
+                number: 2,
+                full_name: "irc.libera.#rust".to_string(),
+                short_name: "#rust".to_string(),
+                server_name: "Libera".to_string(),
+                buffer_type: "channel".to_string(),
+                title: "Rust programming".to_string(),
+                notify_level: 0,
+                local_vars: HashMap::new(),
+            },
+            RelayBuffer {
+                ptr: "0x3".to_string(),
+                number: 3,
+                full_name: "irc.oftc.#debian".to_string(),
+                short_name: "#debian".to_string(),
+                server_name: "OFTC".to_string(),
+                buffer_type: "channel".to_string(),
+                title: "Debian linux".to_string(),
+                notify_level: 0,
+                local_vars: HashMap::new(),
+            },
+        ];
+
+        controller.handle_relay_event(RelayEvent::BuffersListed(buffers));
+
+        // When unfiltered, index 1 corresponds to #rust (ptr 0x2)
+        assert!(controller.select_buffer_by_filtered_index(1));
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x2");
+        assert_eq!(controller.active_buffer_name.to_string(), "#rust");
+
+        // Filter by number "3" (e.g. typing "3" in Ctrl+K dialog)
+        controller.filter_buffers("3".into());
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.iter().count(), 1);
+            assert_eq!(
+                model.iter().next().unwrap().short_name.to_string(),
+                "#debian"
+            );
+        }
+        assert!(controller.select_buffer_by_filtered_index(0));
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
+
+        // Invalid index returns false safely
+        assert!(!controller.select_buffer_by_filtered_index(99));
+        assert!(!controller.select_buffer_by_filtered_index(-1));
     }
 
     #[test]

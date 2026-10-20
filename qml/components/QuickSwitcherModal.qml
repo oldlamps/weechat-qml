@@ -28,6 +28,10 @@ Rectangle {
     function activateSelection() {
         if (switcherList.count === 0) return
         var idx = Math.max(0, Math.min(switcherList.currentIndex, switcherList.count - 1))
+        if (relayController.select_buffer_by_filtered_index(idx)) {
+            switcherOverlay.closeModal()
+            return
+        }
         var item = switcherList.itemAtIndex(idx)
         if (item && item.itemPtr) {
             relayController.select_buffer(item.itemPtr)
@@ -172,6 +176,40 @@ Rectangle {
                 highlightMoveDuration: 0
                 highlightMoveVelocity: -1
                 keyNavigationWraps: true
+
+                section.property: "server_name"
+                section.criteria: ViewSection.FullString
+                section.delegate: Item {
+                    width: switcherList.width
+                    height: 24
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "transparent"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            spacing: 8
+
+                            Text {
+                                text: section.toUpperCase()
+                                color: theme.accentCyan
+                                font.pixelSize: 10
+                                font.bold: true
+                                font.letterSpacing: 0.8
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: theme.borderSubtle
+                                opacity: 0.5
+                            }
+                        }
+                    }
+                }
 
                 delegate: Item {
                     id: delegateItem
