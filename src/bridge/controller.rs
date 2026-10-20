@@ -393,6 +393,8 @@ impl RelayController {
         self.initial_lines_fetch = cfg.initial_lines_fetch;
         self.auto_reconnect = cfg.auto_reconnect;
         self.sidebar_server_order = cfg.sidebar_server_order.clone();
+        self.preferences_changed();
+        self.config_changed();
     }
 
     pub fn init_controller(&mut self) {
@@ -2266,7 +2268,7 @@ mod tests {
         assert!(!loaded.auto_reconnect);
 
         // Verify that instantiating a new RelayController::default() immediately loads these values
-        let new_controller = RelayController::default();
+        let mut new_controller = RelayController::default();
         assert_eq!(new_controller.font_size, 18);
         assert_eq!(new_controller.theme_name.to_string(), "Tokyo Night");
         assert!(!new_controller.desktop_notifications);
@@ -2275,5 +2277,20 @@ mod tests {
         assert_eq!(new_controller.timestamp_format.to_string(), "%H:%M:%S");
         assert_eq!(new_controller.initial_lines_fetch, 250);
         assert!(!new_controller.auto_reconnect);
+
+        // Verify toggles flip values, save them, and init_controller preserves them
+        new_controller.toggle_desktop_notifications();
+        assert!(new_controller.desktop_notifications);
+        new_controller.toggle_join_part_quit();
+        assert!(!new_controller.show_join_part_quit);
+
+        let reloaded_cfg = AppConfig::load();
+        assert!(reloaded_cfg.desktop_notifications);
+        assert!(!reloaded_cfg.show_join_part_quit);
+
+        let mut restarted_controller = RelayController::default();
+        restarted_controller.init_controller();
+        assert!(restarted_controller.desktop_notifications);
+        assert!(!restarted_controller.show_join_part_quit);
     }
 }

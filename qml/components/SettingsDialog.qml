@@ -388,7 +388,7 @@ Rectangle {
                                 Switch {
                                     id: notifSwitch
                                     checked: relayController.desktop_notifications
-                                    onToggled: relayController.set_desktop_notifications(checked)
+                                    interactive: false
                                 }
                             }
 
@@ -396,11 +396,7 @@ Rectangle {
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: function(mouse) {
-                                    if (mouse.x < notifSwitch.x || mouse.x > notifSwitch.x + notifSwitch.width) {
-                                        notifSwitch.toggle()
-                                    }
-                                }
+                                onClicked: relayController.toggle_desktop_notifications()
                             }
                         }
 
@@ -427,7 +423,7 @@ Rectangle {
                                 Switch {
                                     id: mediaSwitch
                                     checked: relayController.show_media_previews
-                                    onToggled: relayController.set_show_media_previews(checked)
+                                    interactive: false
                                 }
                             }
 
@@ -435,11 +431,7 @@ Rectangle {
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: function(mouse) {
-                                    if (mouse.x < mediaSwitch.x || mouse.x > mediaSwitch.x + mediaSwitch.width) {
-                                        mediaSwitch.toggle()
-                                    }
-                                }
+                                onClicked: relayController.toggle_media_previews()
                             }
                         }
 
@@ -466,7 +458,7 @@ Rectangle {
                                 Switch {
                                     id: jpqSwitch
                                     checked: relayController.show_join_part_quit
-                                    onToggled: relayController.set_show_join_part_quit(checked)
+                                    interactive: false
                                 }
                             }
 
@@ -474,11 +466,7 @@ Rectangle {
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: function(mouse) {
-                                    if (mouse.x < jpqSwitch.x || mouse.x > jpqSwitch.x + jpqSwitch.width) {
-                                        jpqSwitch.toggle()
-                                    }
-                                }
+                                onClicked: relayController.toggle_join_part_quit()
                             }
                         }
 
@@ -505,7 +493,7 @@ Rectangle {
                                 Switch {
                                     id: autoRecSwitch
                                     checked: relayController.auto_reconnect
-                                    onToggled: relayController.set_auto_reconnect(checked)
+                                    interactive: false
                                 }
                             }
 
@@ -513,11 +501,7 @@ Rectangle {
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: function(mouse) {
-                                    if (mouse.x < autoRecSwitch.x || mouse.x > autoRecSwitch.x + autoRecSwitch.width) {
-                                        autoRecSwitch.toggle()
-                                    }
-                                }
+                                onClicked: relayController.toggle_auto_reconnect()
                             }
                         }
                     }
