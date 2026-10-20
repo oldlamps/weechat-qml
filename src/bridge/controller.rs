@@ -19,7 +19,7 @@ use crate::relay::types::normalize_ptr;
 use super::models::{BufferItem, MessageItem, NickItem, ServerProfileItem};
 use crate::servers::{ServerProfile, ServerStore};
 
-#[derive(QObject, Default)]
+#[derive(QObject)]
 pub struct RelayController {
     base: qt_base_class!(trait QObject),
 
@@ -106,13 +106,17 @@ pub struct RelayController {
     pub send_input: qt_method!(fn(&mut self, text: QString)),
     pub load_more_history: qt_method!(fn(&mut self)),
     pub toggle_join_part_quit: qt_method!(fn(&mut self)),
+    pub set_show_join_part_quit: qt_method!(fn(&mut self, enabled: bool)),
     pub toggle_media_previews: qt_method!(fn(&mut self)),
+    pub set_show_media_previews: qt_method!(fn(&mut self, enabled: bool)),
     pub toggle_desktop_notifications: qt_method!(fn(&mut self)),
+    pub set_desktop_notifications: qt_method!(fn(&mut self, enabled: bool)),
     pub set_theme: qt_method!(fn(&mut self, theme: QString)),
     pub set_font_size: qt_method!(fn(&mut self, size: i32)),
     pub set_initial_lines_fetch: qt_method!(fn(&mut self, count: i32)),
     pub set_timestamp_format: qt_method!(fn(&mut self, format: QString)),
     pub toggle_auto_reconnect: qt_method!(fn(&mut self)),
+    pub set_auto_reconnect: qt_method!(fn(&mut self, enabled: bool)),
     pub filter_buffers: qt_method!(fn(&mut self, query: QString)),
     pub search_in_buffer: qt_method!(fn(&mut self, query: QString)),
     pub complete_input: qt_method!(fn(&mut self, text: QString, cursor_pos: i32) -> QString),
@@ -202,9 +206,109 @@ fn sort_buffers_by_server_and_number(buffers: &mut Vec<RelayBuffer>) {
     }
 }
 
-impl RelayController {
-    pub fn init_controller(&mut self) {
+impl Default for RelayController {
+    fn default() -> Self {
+        let mut controller = Self {
+            base: Default::default(),
+            connection_state: "Disconnected".into(),
+            status_detail: "Select a server profile to connect".into(),
+            server_version: QString::default(),
+            error_message: QString::default(),
+            latency_ms: 0,
+            is_demo_mode: false,
+            saved_host: QString::default(),
+            saved_port: 9000,
+            saved_use_tls: false,
+            saved_verify_tls: true,
+            show_join_part_quit: false,
+            show_media_previews: true,
+            desktop_notifications: true,
+            theme_name: "Catppuccin Mocha".into(),
+            font_family: "Inter, Noto Sans, Cantarell, sans-serif".into(),
+            font_size: 13,
+            timestamp_format: "%H:%M".into(),
+            initial_lines_fetch: 150,
+            auto_reconnect: true,
+            active_buffer_ptr: QString::default(),
+            active_buffer_name: QString::default(),
+            active_buffer_server: QString::default(),
+            active_buffer_type: QString::default(),
+            active_buffer_topic: QString::default(),
+            active_buffer_nick_count: 0,
+            total_unread_count: 0,
+            total_highlight_count: 0,
+            search_match_count: 0,
+            active_server_id: QString::default(),
+            active_server_name: QString::default(),
+            active_server_has_password: false,
+            buffer_model: Default::default(),
+            message_model: Default::default(),
+            nick_model: Default::default(),
+            server_model: Default::default(),
+            connection_state_changed: Default::default(),
+            error_message_changed: Default::default(),
+            latency_changed: Default::default(),
+            config_changed: Default::default(),
+            preferences_changed: Default::default(),
+            active_buffer_changed: Default::default(),
+            nick_count_changed: Default::default(),
+            hotlist_summary_changed: Default::default(),
+            search_changed: Default::default(),
+            new_message_arrived: Default::default(),
+            active_server_changed: Default::default(),
+            server_list_changed: Default::default(),
+            init_controller: Default::default(),
+            connect_to_relay: Default::default(),
+            start_demo_mode: Default::default(),
+            disconnect_relay: Default::default(),
+            select_buffer: Default::default(),
+            close_buffer: Default::default(),
+            select_next_unread_buffer: Default::default(),
+            select_next_buffer: Default::default(),
+            select_previous_buffer: Default::default(),
+            select_buffer_by_number: Default::default(),
+            send_input: Default::default(),
+            load_more_history: Default::default(),
+            toggle_join_part_quit: Default::default(),
+            set_show_join_part_quit: Default::default(),
+            toggle_media_previews: Default::default(),
+            set_show_media_previews: Default::default(),
+            toggle_desktop_notifications: Default::default(),
+            set_desktop_notifications: Default::default(),
+            set_theme: Default::default(),
+            set_font_size: Default::default(),
+            set_initial_lines_fetch: Default::default(),
+            set_timestamp_format: Default::default(),
+            toggle_auto_reconnect: Default::default(),
+            set_auto_reconnect: Default::default(),
+            filter_buffers: Default::default(),
+            search_in_buffer: Default::default(),
+            complete_input: Default::default(),
+            open_query_with_nick: Default::default(),
+            whois_nick: Default::default(),
+            load_servers: Default::default(),
+            connect_server_profile: Default::default(),
+            save_server_profile: Default::default(),
+            delete_server_profile: Default::default(),
+            get_saved_password_for_server: Default::default(),
+            select_active_server: Default::default(),
+            cmd_tx: None,
+            buffers_cache: Vec::new(),
+            lines_cache: HashMap::new(),
+            nicks_cache: HashMap::new(),
+            unread_map: HashMap::new(),
+            buffer_filter_query: String::new(),
+            message_search_query: String::new(),
+            server_store: ServerStore::default(),
+        };
         let cfg = AppConfig::load();
+        controller.apply_config(&cfg);
+        controller
+    }
+}
+
+impl RelayController {
+    pub fn apply_config(&mut self, cfg: &AppConfig) {
         self.saved_host = cfg.host.clone().into();
         self.saved_port = cfg.port as i32;
         self.saved_use_tls = cfg.use_tls;
@@ -218,6 +322,11 @@ impl RelayController {
         self.timestamp_format = cfg.timestamp_format.clone().into();
         self.initial_lines_fetch = cfg.initial_lines_fetch;
         self.auto_reconnect = cfg.auto_reconnect;
+    }
+
+    pub fn init_controller(&mut self) {
+        let cfg = AppConfig::load();
+        self.apply_config(&cfg);
         self.connection_state = "Disconnected".into();
         self.status_detail = "Select a server profile to connect".into();
 
@@ -1105,20 +1214,32 @@ impl RelayController {
     }
 
     pub fn toggle_join_part_quit(&mut self) {
-        self.show_join_part_quit = !self.show_join_part_quit;
+        self.set_show_join_part_quit(!self.show_join_part_quit);
+    }
+
+    pub fn set_show_join_part_quit(&mut self, enabled: bool) {
+        self.show_join_part_quit = enabled;
         self.save_current_config();
         self.preferences_changed();
         self.rebuild_message_model();
     }
 
     pub fn toggle_media_previews(&mut self) {
-        self.show_media_previews = !self.show_media_previews;
+        self.set_show_media_previews(!self.show_media_previews);
+    }
+
+    pub fn set_show_media_previews(&mut self, enabled: bool) {
+        self.show_media_previews = enabled;
         self.save_current_config();
         self.preferences_changed();
     }
 
     pub fn toggle_desktop_notifications(&mut self) {
-        self.desktop_notifications = !self.desktop_notifications;
+        self.set_desktop_notifications(!self.desktop_notifications);
+    }
+
+    pub fn set_desktop_notifications(&mut self, enabled: bool) {
+        self.desktop_notifications = enabled;
         self.save_current_config();
         self.preferences_changed();
     }
@@ -1149,7 +1270,11 @@ impl RelayController {
     }
 
     pub fn toggle_auto_reconnect(&mut self) {
-        self.auto_reconnect = !self.auto_reconnect;
+        self.set_auto_reconnect(!self.auto_reconnect);
+    }
+
+    pub fn set_auto_reconnect(&mut self, enabled: bool) {
+        self.auto_reconnect = enabled;
         self.save_current_config();
         self.preferences_changed();
     }
@@ -1819,5 +1944,56 @@ mod tests {
         assert_eq!(updated_buf.server_name, "Libera");
         assert_eq!(controller.active_buffer_type.to_string(), "channel");
         assert_eq!(controller.active_buffer_server.to_string(), "Libera");
+    }
+
+    #[test]
+    fn test_controller_settings_setters_and_persistence() {
+        let mut controller = RelayController::default();
+
+        controller.set_font_size(18);
+        assert_eq!(controller.font_size, 18);
+
+        controller.set_theme("Tokyo Night".into());
+        assert_eq!(controller.theme_name.to_string(), "Tokyo Night");
+
+        controller.set_desktop_notifications(false);
+        assert!(!controller.desktop_notifications);
+
+        controller.set_show_media_previews(false);
+        assert!(!controller.show_media_previews);
+
+        controller.set_show_join_part_quit(true);
+        assert!(controller.show_join_part_quit);
+
+        controller.set_timestamp_format("%H:%M:%S".into());
+        assert_eq!(controller.timestamp_format.to_string(), "%H:%M:%S");
+
+        controller.set_initial_lines_fetch(250);
+        assert_eq!(controller.initial_lines_fetch, 250);
+
+        controller.set_auto_reconnect(false);
+        assert!(!controller.auto_reconnect);
+
+        // Verify that AppConfig::load() reflects these saved settings
+        let loaded = AppConfig::load();
+        assert_eq!(loaded.font_size, 18);
+        assert_eq!(loaded.theme_name, "Tokyo Night");
+        assert!(!loaded.desktop_notifications);
+        assert!(!loaded.show_media_previews);
+        assert!(loaded.show_join_part_quit);
+        assert_eq!(loaded.timestamp_format, "%H:%M:%S");
+        assert_eq!(loaded.initial_lines_fetch, 250);
+        assert!(!loaded.auto_reconnect);
+
+        // Verify that instantiating a new RelayController::default() immediately loads these values
+        let new_controller = RelayController::default();
+        assert_eq!(new_controller.font_size, 18);
+        assert_eq!(new_controller.theme_name.to_string(), "Tokyo Night");
+        assert!(!new_controller.desktop_notifications);
+        assert!(!new_controller.show_media_previews);
+        assert!(new_controller.show_join_part_quit);
+        assert_eq!(new_controller.timestamp_format.to_string(), "%H:%M:%S");
+        assert_eq!(new_controller.initial_lines_fetch, 250);
+        assert!(!new_controller.auto_reconnect);
     }
 }

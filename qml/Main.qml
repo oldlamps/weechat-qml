@@ -28,8 +28,12 @@ ApplicationWindow {
 
     Theme {
         id: appTheme
-        activeThemeName: relay.theme_name.length > 0 ? relay.theme_name : "Catppuccin Mocha"
-        baseFontSize: relay.font_size > 0 ? relay.font_size : 13
+        Binding on activeThemeName {
+            value: relay.theme_name.length > 0 ? relay.theme_name : "Catppuccin Mocha"
+        }
+        Binding on baseFontSize {
+            value: relay.font_size > 0 ? relay.font_size : 13
+        }
     }
 
     RelayController {

@@ -186,7 +186,6 @@ Rectangle {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: {
-                                            theme.activeThemeName = modelData
                                             relayController.set_theme(modelData)
                                         }
                                     }
@@ -232,15 +231,14 @@ Rectangle {
                                 from: 11
                                 to: 20
                                 stepSize: 1
-                                value: theme.baseFontSize
-                                onValueChanged: {
-                                    theme.baseFontSize = Math.round(value)
+                                value: relayController.font_size > 0 ? relayController.font_size : 13
+                                onMoved: {
                                     relayController.set_font_size(Math.round(value))
                                 }
                             }
 
                             Text {
-                                text: theme.baseFontSize + " px"
+                                text: (relayController.font_size > 0 ? relayController.font_size : theme.baseFontSize) + " px"
                                 color: theme.accentCyan
                                 font.pixelSize: 13
                                 font.bold: true
@@ -388,12 +386,22 @@ Rectangle {
                                 }
 
                                 Switch {
+                                    id: notifSwitch
                                     checked: relayController.desktop_notifications
-                                    onToggled: relayController.toggle_desktop_notifications()
+                                    onToggled: relayController.set_desktop_notifications(checked)
                                 }
                             }
 
                             HoverHandler { id: notifHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: function(mouse) {
+                                    if (mouse.x < notifSwitch.x || mouse.x > notifSwitch.x + notifSwitch.width) {
+                                        notifSwitch.toggle()
+                                    }
+                                }
+                            }
                         }
 
                         // Inline Image / Media Previews Toggle
@@ -417,12 +425,22 @@ Rectangle {
                                 }
 
                                 Switch {
+                                    id: mediaSwitch
                                     checked: relayController.show_media_previews
-                                    onToggled: relayController.toggle_media_previews()
+                                    onToggled: relayController.set_show_media_previews(checked)
                                 }
                             }
 
                             HoverHandler { id: mediaHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: function(mouse) {
+                                    if (mouse.x < mediaSwitch.x || mouse.x > mediaSwitch.x + mediaSwitch.width) {
+                                        mediaSwitch.toggle()
+                                    }
+                                }
+                            }
                         }
 
                         // Join / Part / Quit Event Noise Filter Toggle
@@ -446,12 +464,22 @@ Rectangle {
                                 }
 
                                 Switch {
+                                    id: jpqSwitch
                                     checked: relayController.show_join_part_quit
-                                    onToggled: relayController.toggle_join_part_quit()
+                                    onToggled: relayController.set_show_join_part_quit(checked)
                                 }
                             }
 
                             HoverHandler { id: jpqHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: function(mouse) {
+                                    if (mouse.x < jpqSwitch.x || mouse.x > jpqSwitch.x + jpqSwitch.width) {
+                                        jpqSwitch.toggle()
+                                    }
+                                }
+                            }
                         }
 
                         // Auto Reconnect Toggle
@@ -475,12 +503,22 @@ Rectangle {
                                 }
 
                                 Switch {
+                                    id: autoRecSwitch
                                     checked: relayController.auto_reconnect
-                                    onToggled: relayController.toggle_auto_reconnect()
+                                    onToggled: relayController.set_auto_reconnect(checked)
                                 }
                             }
 
                             HoverHandler { id: autoRecHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: function(mouse) {
+                                    if (mouse.x < autoRecSwitch.x || mouse.x > autoRecSwitch.x + autoRecSwitch.width) {
+                                        autoRecSwitch.toggle()
+                                    }
+                                }
+                            }
                         }
                     }
                 }
