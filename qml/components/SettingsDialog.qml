@@ -388,7 +388,6 @@ Rectangle {
                                 Switch {
                                     id: notifSwitch
                                     checked: relayController.desktop_notifications
-                                    interactive: false
                                 }
                             }
 
@@ -423,7 +422,6 @@ Rectangle {
                                 Switch {
                                     id: mediaSwitch
                                     checked: relayController.show_media_previews
-                                    interactive: false
                                 }
                             }
 
@@ -458,7 +456,6 @@ Rectangle {
                                 Switch {
                                     id: jpqSwitch
                                     checked: relayController.show_join_part_quit
-                                    interactive: false
                                 }
                             }
 
@@ -493,7 +490,6 @@ Rectangle {
                                 Switch {
                                     id: autoRecSwitch
                                     checked: relayController.auto_reconnect
-                                    interactive: false
                                 }
                             }
 
