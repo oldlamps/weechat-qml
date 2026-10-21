@@ -128,7 +128,7 @@ pub struct RelayController {
     pub whois_nick: qt_method!(fn(&mut self, nick: QString)),
     pub play_with_mpv: qt_method!(fn(&mut self, url: QString)),
     pub resolve_media_stream: qt_method!(fn(&mut self, media_url: QString, target_id: QString)),
-    pub media_stream_resolved: qt_signal!(target_id: QString, stream_url: QString),
+    pub media_stream_resolved: qt_signal!(target_id: QString, stream_url: QString, audio_url: QString),
     pub media_stream_error: qt_signal!(target_id: QString, error_msg: QString),
 
     // Collapsed server sections
@@ -1595,12 +1595,13 @@ impl RelayController {
         }
 
         let qptr = QPointer::from(&*self);
-        let on_resolved = qmetaobject::queued_callback(move |(id, stream): (String, String)| {
-            if let Some(this) = qptr.as_pinned() {
-                this.borrow()
-                    .media_stream_resolved(id.into(), stream.into());
-            }
-        });
+        let on_resolved =
+            qmetaobject::queued_callback(move |(id, stream, audio): (String, String, String)| {
+                if let Some(this) = qptr.as_pinned() {
+                    this.borrow()
+                        .media_stream_resolved(id.into(), stream.into(), audio.into());
+                }
+            });
         let qptr2 = QPointer::from(&*self);
         let on_error = qmetaobject::queued_callback(move |(id, err): (String, String)| {
             if let Some(this) = qptr2.as_pinned() {
@@ -1611,23 +1612,28 @@ impl RelayController {
         std::thread::spawn(move || {
             let output = std::process::Command::new("yt-dlp")
                 .args([
+                    "--no-warnings",
+                    "--no-playlist",
                     "-g",
                     "-f",
-                    "best[height<=720][ext=mp4]/best[ext=mp4]/best",
+                    "best[acodec!=none][vcodec!=none]/bestvideo[height<=720]+bestaudio/bestvideo+bestaudio/best[height<=720]/best/b*[height<=720]/b*",
                     &u,
                 ])
                 .output();
 
             match output {
                 Ok(out) if out.status.success() => {
-                    let stream = String::from_utf8_lossy(&out.stdout)
+                    let stdout_str = String::from_utf8_lossy(&out.stdout);
+                    let mut lines = stdout_str
                         .lines()
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    if !stream.is_empty() {
-                        on_resolved((tid, stream));
+                        .map(|l| l.trim().to_string())
+                        .filter(|l| !l.is_empty());
+
+                    let video_stream = lines.next().unwrap_or_default();
+                    let audio_stream = lines.next().unwrap_or_default();
+
+                    if !video_stream.is_empty() {
+                        on_resolved((tid, video_stream, audio_stream));
                     } else {
                         on_error((tid, "yt-dlp returned an empty stream URL".to_string()));
                     }
@@ -1637,7 +1643,13 @@ impl RelayController {
                     let msg = if err.is_empty() {
                         "yt-dlp failed to resolve stream URL".to_string()
                     } else {
-                        err
+                        // Extract first non-empty line or the line containing ERROR:
+                        err.lines()
+                            .find(|l| l.contains("ERROR:"))
+                            .or_else(|| err.lines().find(|l| !l.trim().is_empty()))
+                            .unwrap_or(&err)
+                            .trim()
+                            .to_string()
                     };
                     on_error((tid, msg));
                 }

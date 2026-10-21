@@ -13,6 +13,7 @@ Item {
     property bool previewCollapsed: false
     property bool isInlinePlaying: false
     property string inlineStreamUrl: ""
+    property string inlineAudioUrl: ""
     property bool isResolvingStream: false
     property string resolveError: ""
     property string ytTitle: ""
@@ -23,12 +24,17 @@ Item {
 
     Connections {
         target: relayController
-        function onMedia_stream_resolved(target_id, stream_url) {
+        function onMedia_stream_resolved(target_id, stream_url, audio_url) {
             if (target_id === model.line_ptr) {
                 msgRoot.isResolvingStream = false
                 msgRoot.resolveError = ""
                 msgRoot.inlineStreamUrl = stream_url
+                msgRoot.inlineAudioUrl = audio_url || ""
                 msgRoot.isInlinePlaying = true
+                inlinePlayer.play()
+                if (msgRoot.inlineAudioUrl.length > 0) {
+                    inlineAudioPlayer.play()
+                }
             }
         }
         function onMedia_stream_error(target_id, error_msg) {
@@ -611,7 +617,47 @@ Item {
                                     MediaPlayer {
                                         id: inlinePlayer
                                         videoOutput: videoOut
+                                        audioOutput: msgRoot.inlineAudioUrl.length === 0 ? primaryAudioOut : null
                                         source: msgRoot.inlineStreamUrl
+
+                                        onPlaybackStateChanged: {
+                                            if (msgRoot.inlineAudioUrl.length > 0) {
+                                                if (inlinePlayer.playbackState === MediaPlayer.PlayingState &&
+                                                    inlineAudioPlayer.playbackState !== MediaPlayer.PlayingState) {
+                                                    inlineAudioPlayer.play()
+                                                } else if (inlinePlayer.playbackState === MediaPlayer.PausedState &&
+                                                           inlineAudioPlayer.playbackState !== MediaPlayer.PausedState) {
+                                                    inlineAudioPlayer.pause()
+                                                } else if (inlinePlayer.playbackState === MediaPlayer.StoppedState &&
+                                                           inlineAudioPlayer.playbackState !== MediaPlayer.StoppedState) {
+                                                    inlineAudioPlayer.stop()
+                                                }
+                                            }
+                                        }
+
+                                        onPositionChanged: {
+                                            if (msgRoot.inlineAudioUrl.length > 0 && inlinePlayer.playbackState === MediaPlayer.PlayingState) {
+                                                var diff = Math.abs(inlinePlayer.position - inlineAudioPlayer.position)
+                                                if (diff > 350) {
+                                                    inlineAudioPlayer.position = inlinePlayer.position
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    AudioOutput {
+                                        id: primaryAudioOut
+                                    }
+
+                                    // Secondary audio player for YouTube DASH streams where audio is served as a separate track
+                                    MediaPlayer {
+                                        id: inlineAudioPlayer
+                                        audioOutput: separateAudioOut
+                                        source: msgRoot.inlineAudioUrl
+                                    }
+
+                                    AudioOutput {
+                                        id: separateAudioOut
                                     }
 
                                     VideoOutput {
@@ -643,8 +689,14 @@ Item {
                                                     onClicked: {
                                                         if (inlinePlayer.playbackState === MediaPlayer.PlayingState) {
                                                             inlinePlayer.pause()
+                                                            if (msgRoot.inlineAudioUrl.length > 0) {
+                                                                inlineAudioPlayer.pause()
+                                                            }
                                                         } else {
                                                             inlinePlayer.play()
+                                                            if (msgRoot.inlineAudioUrl.length > 0) {
+                                                                inlineAudioPlayer.play()
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -655,7 +707,12 @@ Item {
                                                 from: 0
                                                 to: Math.max(1, inlinePlayer.duration)
                                                 value: inlinePlayer.position
-                                                onMoved: inlinePlayer.position = value
+                                                onMoved: {
+                                                    inlinePlayer.position = value
+                                                    if (msgRoot.inlineAudioUrl.length > 0) {
+                                                        inlineAudioPlayer.position = value
+                                                    }
+                                                }
                                             }
 
                                             Text {
@@ -680,7 +737,12 @@ Item {
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         inlinePlayer.stop()
+                                                        if (msgRoot.inlineAudioUrl.length > 0) {
+                                                            inlineAudioPlayer.stop()
+                                                        }
                                                         msgRoot.isInlinePlaying = false
+                                                        msgRoot.inlineStreamUrl = ""
+                                                        msgRoot.inlineAudioUrl = ""
                                                     }
                                                 }
                                             }
@@ -761,12 +823,25 @@ Item {
 
                                     // Status / Error message or spacer
                                     Text {
+                                        id: errText
                                         Layout.fillWidth: true
                                         visible: msgRoot.resolveError.length > 0
                                         text: msgRoot.resolveError
                                         color: theme.badgeHighlight
                                         font.pixelSize: 10
                                         elide: Text.ElideRight
+
+                                        HoverHandler { id: errHover }
+                                        ToolTip.visible: errHover.hovered && msgRoot.resolveError.length > 0
+                                        ToolTip.text: msgRoot.resolveError + "\n(Click to copy error to clipboard)"
+                                        ToolTip.delay: 150
+                                        ToolTip.timeout: 15000
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: relayController.copy_to_clipboard(msgRoot.resolveError)
+                                        }
                                     }
 
                                     Item {
@@ -796,6 +871,58 @@ Item {
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: Qt.openUrlExternally(model.media_url)
                                         }
+                                    }
+                                }
+                            }
+
+                            // Error Detail Banner (shown if stream resolution encounters an error so it is never truncated)
+                            Rectangle {
+                                Layout.fillWidth: true
+                                visible: msgRoot.resolveError.length > 0 && !msgRoot.isInlinePlaying
+                                implicitHeight: errCol.implicitHeight + 12
+                                radius: 6
+                                color: Qt.alpha(theme.statusError, 0.12)
+                                border.color: Qt.alpha(theme.statusError, 0.3)
+                                border.width: 1
+
+                                ColumnLayout {
+                                    id: errCol
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 4
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Text { text: "⚠️"; font.pixelSize: 11 }
+                                        Text {
+                                            text: "Stream Resolution Error"
+                                            color: theme.statusError
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                            Layout.fillWidth: true
+                                        }
+                                        Text {
+                                            text: "📋 Copy Error"
+                                            color: copyErrHover.hovered ? theme.textPrimary : theme.textSecondary
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                            HoverHandler { id: copyErrHover }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: relayController.copy_to_clipboard(msgRoot.resolveError)
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: msgRoot.resolveError
+                                        color: theme.textSecondary
+                                        font.pixelSize: 11
+                                        font.family: theme.fontMono
+                                        wrapMode: Text.WrapAnywhere
+                                        Layout.fillWidth: true
                                     }
                                 }
                             }
