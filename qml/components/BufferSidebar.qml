@@ -8,7 +8,6 @@ Rectangle {
 
     property var relayController
     property var theme
-    signal openConnectionRequested()
     signal openServerManagerRequested()
     signal openQuickSwitcherRequested()
     signal openSettingsRequested()

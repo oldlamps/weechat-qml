@@ -13,7 +13,6 @@ qrc!(app_resources,
     "qml" {
         "qml/Main.qml" as "Main.qml",
         "qml/Theme.qml" as "Theme.qml",
-        "qml/components/ConnectionDialog.qml" as "components/ConnectionDialog.qml",
         "qml/components/BufferSidebar.qml" as "components/BufferSidebar.qml",
         "qml/components/ChatHeader.qml" as "components/ChatHeader.qml",
         "qml/components/MessageListView.qml" as "components/MessageListView.qml",

@@ -160,6 +160,7 @@ pub struct RelayController {
     pub delete_server_profile: qt_method!(fn(&mut self, server_id: QString)),
     pub get_saved_password_for_server: qt_method!(fn(&mut self, server_id: QString) -> QString),
     pub select_active_server: qt_method!(fn(&mut self, server_id: QString)),
+    pub should_show_server_manager_on_startup: qt_method!(fn(&self) -> bool),
 
     // Internal Rust state
     cmd_tx: Option<mpsc::UnboundedSender<ClientCommand>>,
@@ -388,6 +389,7 @@ impl Default for RelayController {
             delete_server_profile: Default::default(),
             get_saved_password_for_server: Default::default(),
             select_active_server: Default::default(),
+            should_show_server_manager_on_startup: Default::default(),
             cmd_tx: None,
             buffers_cache: Vec::new(),
             lines_cache: HashMap::new(),
@@ -1136,6 +1138,14 @@ impl RelayController {
             return p.get_keyring_password().unwrap_or_default().into();
         }
         QString::default()
+    }
+
+    pub fn should_show_server_manager_on_startup(&self) -> bool {
+        if let Some(active) = self.server_store.get_active_or_first() {
+            !(active.auto_connect && self.active_server_has_password)
+        } else {
+            true
+        }
     }
 
     fn rebuild_server_model(&mut self) {
@@ -2800,5 +2810,42 @@ mod tests {
         reloaded_controller.apply_config(&cfg);
         assert!(reloaded_controller.is_server_collapsed("OFTC".into()));
         assert!(!reloaded_controller.is_server_collapsed("Libera".into()));
+    }
+
+    #[test]
+    fn test_should_show_server_manager_on_startup_conditions() {
+        let mut controller = RelayController::default();
+
+        // 1. First run / no profile or profile without auto_connect
+        controller.server_store.servers.clear();
+        controller.server_store.active_server_id = None;
+        assert!(controller.should_show_server_manager_on_startup());
+
+        let p1 = ServerProfile {
+            id: "srv1".to_string(),
+            name: "Libera".to_string(),
+            host: "irc.libera.chat".to_string(),
+            port: 9000,
+            use_tls: true,
+            verify_tls: true,
+            save_password: true,
+            auto_connect: false,
+            totp: String::new(),
+        };
+        controller.server_store.servers.push(p1);
+        controller.server_store.active_server_id = Some("srv1".to_string());
+        controller.active_server_has_password = true;
+
+        // Auto-connect is false -> should show server manager on startup
+        assert!(controller.should_show_server_manager_on_startup());
+
+        // 2. Profile has auto_connect: true, but NO password saved
+        controller.server_store.servers[0].auto_connect = true;
+        controller.active_server_has_password = false;
+        assert!(controller.should_show_server_manager_on_startup());
+
+        // 3. Profile has auto_connect: true AND password saved
+        controller.active_server_has_password = true;
+        assert!(!controller.should_show_server_manager_on_startup());
     }
 }

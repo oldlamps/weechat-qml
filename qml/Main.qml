@@ -40,7 +40,9 @@ ApplicationWindow {
         id: relay
         Component.onCompleted: {
             relay.init_controller()
-            connDialog.visible = true
+            if (relay.should_show_server_manager_on_startup()) {
+                serverManagerDialog.openManager()
+            }
         }
         onActive_buffer_changed: {
             chatInputBar.focusInput()
@@ -138,7 +140,6 @@ ApplicationWindow {
             Layout.fillHeight: true
             relayController: relay
             theme: appTheme
-            onOpenConnectionRequested: connDialog.visible = true
             onOpenServerManagerRequested: serverManagerDialog.openManager()
             onOpenQuickSwitcherRequested: quickSwitcher.openModal()
             onOpenSettingsRequested: settingsDialog.visible = true
@@ -201,13 +202,6 @@ ApplicationWindow {
     // Ctrl+K Quick Switcher Modal
     QuickSwitcherModal {
         id: quickSwitcher
-        relayController: relay
-        theme: appTheme
-    }
-
-    // Server Connection Modal
-    ConnectionDialog {
-        id: connDialog
         relayController: relay
         theme: appTheme
     }

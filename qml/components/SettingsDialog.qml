@@ -31,6 +31,35 @@ Rectangle {
             anchors.fill: parent
         }
 
+        // Top-Right Close Button
+        Rectangle {
+            id: closeBtn
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.topMargin: 16
+            anchors.rightMargin: 16
+            width: 32
+            height: 32
+            radius: 8
+            z: 20
+            color: closeHover.hovered ? theme.bgHover : "transparent"
+
+            Text {
+                anchors.centerIn: parent
+                text: "✕"
+                color: closeHover.hovered ? theme.textPrimary : theme.textSecondary
+                font.pixelSize: 15
+                font.bold: true
+            }
+
+            HoverHandler { id: closeHover }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: settingsModal.visible = false
+            }
+        }
+
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 24
@@ -39,6 +68,7 @@ Rectangle {
             // Header Row
             RowLayout {
                 Layout.fillWidth: true
+                Layout.rightMargin: 32
                 spacing: 12
 
                 Rectangle {
@@ -72,26 +102,8 @@ Rectangle {
                         color: theme.textSecondary
                         font.pixelSize: 12
                         font.family: theme.fontSans
-                    }
-                }
-
-                Rectangle {
-                    width: 28
-                    height: 28
-                    radius: 6
-                    color: closeHover.hovered ? theme.bgHover : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "✕"
-                        color: theme.textSecondary
-                        font.pixelSize: 14
-                    }
-
-                    HoverHandler { id: closeHover }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: settingsModal.visible = false
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
                     }
                 }
             }
