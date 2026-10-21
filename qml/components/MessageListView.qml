@@ -21,7 +21,7 @@ Item {
     // Method to page scroll down
     function scrollPageDown() {
         var step = Math.max(100, listView.height * 0.75)
-        var maxY = Math.max(-listView.topMargin, listView.contentHeight - listView.height + listView.bottomMargin)
+        var maxY = Math.max(-listView.topMargin, listView.originY + listView.contentHeight - listView.height + listView.bottomMargin)
         var targetY = listView.contentY + step
 
         if (targetY >= maxY - 50 || listView.atYEnd || listView.isNearBottom) {
@@ -47,7 +47,8 @@ Item {
         listView.autoScroll = true
         listView.positionViewAtEnd()
         Qt.callLater(function() {
-            if (listView.autoScroll) {
+            if (listView.autoScroll && listView.count > 0) {
+                listView.positionViewAtIndex(listView.count - 1, ListView.End)
                 listView.positionViewAtEnd()
             }
         })
@@ -65,37 +66,56 @@ Item {
 
         // Track whether user wants to follow live streaming messages
         property bool autoScroll: true
+        property real previousContentY: 0
 
-        // Reliable detection of whether user is near the bottom (within 80px)
+        // Reliable detection of whether user is near the bottom
         readonly property bool isNearBottom: {
             if (count === 0 || atYEnd || contentHeight <= height) return true
-            var maxY = contentHeight - height + bottomMargin
-            return (maxY - contentY) <= 80
+
+            // 1. Ratio check via visibleArea
+            if ((visibleArea.yPosition + visibleArea.heightRatio) >= 0.985) return true
+
+            // 2. Pixel distance check using true originY offset
+            var maxY = originY + contentHeight - height + bottomMargin
+            if ((maxY - contentY) <= 80) return true
+
+            // 3. Delegate check: is the last item visible in the viewport?
+            var lastItem = itemAtIndex(count - 1)
+            if (lastItem) {
+                var lastItemBottom = lastItem.y + lastItem.height
+                var viewportBottom = contentY + height - bottomMargin
+                if (lastItemBottom <= viewportBottom + 60) return true
+            }
+
+            return false
         }
 
         // Reliable pixel distance between current scroll position and the bottom of content
         readonly property real distanceFromBottom: {
             if (count === 0 || atYEnd || contentHeight <= height) return 0
-            var maxY = contentHeight - height + bottomMargin
+            var maxY = originY + contentHeight - height + bottomMargin
             return Math.max(0, maxY - contentY)
         }
 
         // Show the Jump button ONLY when user has scrolled significantly into the backlog
-        // (at least 350px or 60% of view height away from bottom)
+        // and is not currently autoscrolling
         readonly property bool showJumpButton: {
-            if (count === 0 || atYEnd || isNearBottom) return false
+            if (autoScroll || count === 0 || atYEnd || isNearBottom) return false
             var backlogThreshold = Math.max(350, height * 0.6)
             return distanceFromBottom > backlogThreshold
         }
 
-        // When the user actively interacts with the view (drag, flick, mousewheel):
-        // Re-attach autoScroll if they reach or stay near the bottom.
-        // Freeze autoScroll if they scroll into the past so incoming messages don't shift position.
+        // Track scroll position changes:
+        // - Scrolling DOWN to bottom: re-attaches autoScroll.
+        // - Scrolling UP into history (wheel, drag, flick, keys): detaches autoScroll so user isn't pulled down.
         onContentYChanged: {
+            var deltaY = contentY - previousContentY
+            previousContentY = contentY
+
             if (atYEnd || isNearBottom) {
                 autoScroll = true
-            } else if (moving || flicking || dragging) {
-                if (distanceFromBottom > 150) {
+            } else if (deltaY < -1 || moving || flicking || dragging) {
+                if (distanceFromBottom > 80) {
                     autoScroll = false
                 }
             }

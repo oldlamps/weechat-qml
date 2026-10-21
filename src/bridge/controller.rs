@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{Local, TimeZone};
 use qmetaobject::*;
@@ -128,6 +128,16 @@ pub struct RelayController {
     pub media_stream_resolved: qt_signal!(target_id: QString, stream_url: QString),
     pub media_stream_error: qt_signal!(target_id: QString, error_msg: QString),
 
+    // Collapsed server sections
+    pub collapsed_servers_changed: qt_signal!(),
+    pub is_server_collapsed: qt_method!(fn(&self, server_name: QString) -> bool),
+    pub toggle_server_collapsed: qt_method!(fn(&mut self, server_name: QString) -> bool),
+    pub set_server_collapsed: qt_method!(fn(&mut self, server_name: QString, collapsed: bool)),
+    pub get_collapsed_servers: qt_method!(fn(&self) -> QStringList),
+    pub server_unread_count: qt_method!(fn(&self, server_name: QString) -> i32),
+    pub server_highlight_count: qt_method!(fn(&self, server_name: QString) -> i32),
+    pub server_buffer_count: qt_method!(fn(&self, server_name: QString) -> i32),
+
     // Persistent Server Manager Methods
     pub load_servers: qt_method!(fn(&mut self)),
     pub connect_server_profile:
@@ -161,6 +171,7 @@ pub struct RelayController {
     message_search_query: String,
     server_store: ServerStore,
     sidebar_server_order: Vec<String>,
+    pub collapsed_servers: HashSet<String>,
 }
 
 pub fn sort_buffers_by_server_and_number(
@@ -363,6 +374,14 @@ impl Default for RelayController {
             resolve_media_stream: Default::default(),
             media_stream_resolved: Default::default(),
             media_stream_error: Default::default(),
+            collapsed_servers_changed: Default::default(),
+            is_server_collapsed: Default::default(),
+            toggle_server_collapsed: Default::default(),
+            set_server_collapsed: Default::default(),
+            get_collapsed_servers: Default::default(),
+            server_unread_count: Default::default(),
+            server_highlight_count: Default::default(),
+            server_buffer_count: Default::default(),
             load_servers: Default::default(),
             connect_server_profile: Default::default(),
             save_server_profile: Default::default(),
@@ -378,6 +397,7 @@ impl Default for RelayController {
             message_search_query: String::new(),
             server_store: ServerStore::default(),
             sidebar_server_order: Vec::new(),
+            collapsed_servers: HashSet::new(),
         };
         let cfg = AppConfig::load();
         controller.apply_config(&cfg);
@@ -401,8 +421,10 @@ impl RelayController {
         self.initial_lines_fetch = cfg.initial_lines_fetch;
         self.auto_reconnect = cfg.auto_reconnect;
         self.sidebar_server_order = cfg.sidebar_server_order.clone();
+        self.collapsed_servers = cfg.collapsed_servers.iter().cloned().collect();
         self.preferences_changed();
         self.config_changed();
+        self.collapsed_servers_changed();
     }
 
     pub fn init_controller(&mut self) {
@@ -1622,10 +1644,69 @@ impl RelayController {
             })
             .collect();
 
-        self.buffer_model.borrow_mut().reset_data(items);
+        self.sync_buffer_model(items);
         self.total_unread_count = total_unread;
         self.total_highlight_count = total_highlights;
         self.hotlist_summary_changed();
+    }
+
+    fn sync_buffer_model(&mut self, items: Vec<BufferItem>) {
+        let mut model = self.buffer_model.borrow_mut();
+        let cur_count = model.row_count() as usize;
+
+        if cur_count == 0 {
+            model.reset_data(items);
+            return;
+        }
+
+        // Fast path: identical sequence of buffers (clicking a buffer, message arrival, hotlist update)
+        if cur_count == items.len() && (0..cur_count).all(|i| model[i].ptr == items[i].ptr) {
+            for (i, item) in items.into_iter().enumerate() {
+                if model[i] != item {
+                    model.change_line(i, item);
+                }
+            }
+            return;
+        }
+
+        // General reconciliation for additions, removals, renames, and filtering without resetting the view
+        // 1. Remove items no longer present
+        let new_ptrs: HashSet<String> = items.iter().map(|it| it.ptr.to_string()).collect();
+        let mut i = model.row_count() as usize;
+        while i > 0 {
+            i -= 1;
+            if !new_ptrs.contains(&model[i].ptr.to_string()) {
+                model.remove(i);
+            }
+        }
+
+        // 2. Insert, move, or update items to align with target sequence
+        for (target_idx, target_item) in items.into_iter().enumerate() {
+            let cur_len = model.row_count() as usize;
+            if target_idx < cur_len {
+                if model[target_idx].ptr == target_item.ptr {
+                    if model[target_idx] != target_item {
+                        model.change_line(target_idx, target_item);
+                    }
+                } else {
+                    let mut found_at = None;
+                    for scan in (target_idx + 1)..cur_len {
+                        if model[scan].ptr == target_item.ptr {
+                            found_at = Some(scan);
+                            break;
+                        }
+                    }
+                    if let Some(pos) = found_at {
+                        model.remove(pos);
+                        model.insert(target_idx, target_item);
+                    } else {
+                        model.insert(target_idx, target_item);
+                    }
+                }
+            } else {
+                model.push(target_item);
+            }
+        }
     }
 
     fn rebuild_message_model(&mut self) {
@@ -1878,8 +1959,113 @@ impl RelayController {
             initial_lines_fetch: self.initial_lines_fetch,
             auto_reconnect: self.auto_reconnect,
             sidebar_server_order: self.sidebar_server_order.clone(),
+            collapsed_servers: self.collapsed_servers.iter().cloned().collect(),
         };
         cfg.save();
+    }
+
+    pub fn is_server_collapsed(&self, server_name: QString) -> bool {
+        let name = server_name.to_string();
+        self.collapsed_servers
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(&name))
+    }
+
+    pub fn toggle_server_collapsed(&mut self, server_name: QString) -> bool {
+        let name = server_name.to_string();
+        let mut was_collapsed = false;
+        let mut found_key = None;
+        for s in &self.collapsed_servers {
+            if s.eq_ignore_ascii_case(&name) {
+                was_collapsed = true;
+                found_key = Some(s.clone());
+                break;
+            }
+        }
+        let is_now_collapsed = if was_collapsed {
+            if let Some(k) = found_key {
+                self.collapsed_servers.remove(&k);
+            }
+            false
+        } else {
+            self.collapsed_servers.insert(name);
+            true
+        };
+        self.collapsed_servers_changed();
+        self.save_current_config();
+        is_now_collapsed
+    }
+
+    pub fn set_server_collapsed(&mut self, server_name: QString, collapsed: bool) {
+        let name = server_name.to_string();
+        if collapsed {
+            if !self
+                .collapsed_servers
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(&name))
+            {
+                self.collapsed_servers.insert(name);
+                self.collapsed_servers_changed();
+                self.save_current_config();
+            }
+        } else {
+            let to_remove: Vec<String> = self
+                .collapsed_servers
+                .iter()
+                .filter(|s| s.eq_ignore_ascii_case(&name))
+                .cloned()
+                .collect();
+            if !to_remove.is_empty() {
+                for k in to_remove {
+                    self.collapsed_servers.remove(&k);
+                }
+                self.collapsed_servers_changed();
+                self.save_current_config();
+            }
+        }
+    }
+
+    pub fn get_collapsed_servers(&self) -> QStringList {
+        let list: Vec<QString> = self
+            .collapsed_servers
+            .iter()
+            .map(|s| s.as_str().into())
+            .collect();
+        QStringList::from(list)
+    }
+
+    pub fn server_unread_count(&self, server_name: QString) -> i32 {
+        let name = server_name.to_string();
+        let mut count = 0;
+        for b in &self.buffers_cache {
+            if b.server_name.eq_ignore_ascii_case(&name)
+                && let Some((u, _)) = self.unread_map.get(&b.ptr)
+            {
+                count += u;
+            }
+        }
+        count
+    }
+
+    pub fn server_highlight_count(&self, server_name: QString) -> i32 {
+        let name = server_name.to_string();
+        let mut count = 0;
+        for b in &self.buffers_cache {
+            if b.server_name.eq_ignore_ascii_case(&name)
+                && let Some((_, h)) = self.unread_map.get(&b.ptr)
+            {
+                count += h;
+            }
+        }
+        count
+    }
+
+    pub fn server_buffer_count(&self, server_name: QString) -> i32 {
+        let name = server_name.to_string();
+        self.buffers_cache
+            .iter()
+            .filter(|b| b.server_name.eq_ignore_ascii_case(&name))
+            .count() as i32
     }
 
     pub fn start_demo_mode(&mut self) {}
@@ -2379,5 +2565,240 @@ mod tests {
         restarted_controller.init_controller();
         assert!(restarted_controller.desktop_notifications);
         assert!(!restarted_controller.show_join_part_quit);
+    }
+
+    #[test]
+    fn test_sync_buffer_model_preserves_rows_and_in_place_updates() {
+        let mut controller = RelayController::default();
+
+        let b1 = RelayBuffer {
+            ptr: "0x1".to_string(),
+            number: 1,
+            full_name: "irc.server.libera".to_string(),
+            short_name: "libera".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "server".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b2 = RelayBuffer {
+            ptr: "0x2".to_string(),
+            number: 2,
+            full_name: "irc.libera.#rust".to_string(),
+            short_name: "#rust".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "Rust Channel".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b3 = RelayBuffer {
+            ptr: "0x3".to_string(),
+            number: 3,
+            full_name: "irc.libera.#general".to_string(),
+            short_name: "#general".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "General Channel".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+
+        // 1. Initial buffer list
+        controller.handle_relay_event(RelayEvent::BuffersListed(vec![
+            b1.clone(),
+            b2.clone(),
+            b3.clone(),
+        ]));
+
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.row_count(), 3);
+            assert_eq!(model[0].ptr.to_string(), "0x1");
+            assert_eq!(model[1].ptr.to_string(), "0x2");
+            assert_eq!(model[2].ptr.to_string(), "0x3");
+            // First channel buffer is automatically selected on initial buffer list
+            assert!(model[1].is_active);
+            assert!(!model[2].is_active);
+        }
+
+        // 2. Select buffer 3
+        controller.select_buffer("0x3".into());
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.row_count(), 3);
+            assert_eq!(model[0].ptr.to_string(), "0x1");
+            assert!(!model[0].is_active);
+            assert_eq!(model[1].ptr.to_string(), "0x2");
+            assert!(!model[1].is_active);
+            assert_eq!(model[2].ptr.to_string(), "0x3");
+            assert!(model[2].is_active);
+        }
+
+        // 3. Live message arrives on inactive buffer 2 (#rust)
+        let live_msg = RelayLine {
+            line_ptr: "0xmsg1".to_string(),
+            buffer_ptr: "0x2".to_string(),
+            timestamp: 1700000000,
+            prefix: "alice".to_string(),
+            message: "hello rust".to_string(),
+            tags: vec!["irc_privmsg".to_string()],
+            displayed: true,
+            highlight: false,
+            notify_level: 1,
+        };
+        controller.handle_relay_event(RelayEvent::LineAdded(live_msg));
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.row_count(), 3);
+            assert_eq!(model[1].ptr.to_string(), "0x2");
+            assert_eq!(model[1].unread_count, 1);
+            assert_eq!(model[2].unread_count, 0);
+            assert!(model[2].is_active);
+        }
+
+        // 4. Hotlist update from WeeChat
+        let mut hotlist_map = HashMap::new();
+        hotlist_map.insert("0x3".to_string(), (5, 1));
+        controller.handle_relay_event(RelayEvent::HotlistUpdated(hotlist_map));
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.row_count(), 3);
+            assert_eq!(model[2].unread_count, 5);
+            assert_eq!(model[2].highlight_count, 1);
+        }
+
+        // 5. Open new buffer (#tokio)
+        let b4 = RelayBuffer {
+            ptr: "0x4".to_string(),
+            number: 4,
+            full_name: "irc.libera.#tokio".to_string(),
+            short_name: "#tokio".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        controller.handle_relay_event(RelayEvent::BufferOpened(b4));
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.row_count(), 4);
+        }
+
+        // 6. Close buffer 3
+        controller.handle_relay_event(RelayEvent::BufferClosed {
+            buffer_ptr: "0x3".to_string(),
+            full_name: "irc.libera.#general".to_string(),
+        });
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.row_count(), 3);
+            assert!((0..model.row_count()).all(|i| model[i as usize].ptr.to_string() != "0x3"));
+        }
+
+        // 7. Filter buffers
+        controller.filter_buffers("tokio".into());
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.row_count(), 1);
+            assert_eq!(model[0].ptr.to_string(), "0x4");
+        }
+
+        controller.filter_buffers("".into());
+        {
+            let model = controller.buffer_model.borrow();
+            assert_eq!(model.row_count(), 3);
+        }
+    }
+
+    #[test]
+    fn test_collapsible_server_sections_and_persistence() {
+        let mut controller = RelayController::default();
+        controller.collapsed_servers.clear();
+
+        let b1 = RelayBuffer {
+            ptr: "0x1".to_string(),
+            number: 1,
+            full_name: "irc.server.libera".to_string(),
+            short_name: "libera".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "server".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b2 = RelayBuffer {
+            ptr: "0x2".to_string(),
+            number: 2,
+            full_name: "irc.libera.#rust".to_string(),
+            short_name: "#rust".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b3 = RelayBuffer {
+            ptr: "0x3".to_string(),
+            number: 3,
+            full_name: "irc.oftc.#debian".to_string(),
+            short_name: "#debian".to_string(),
+            server_name: "OFTC".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+
+        controller.handle_relay_event(RelayEvent::BuffersListed(vec![b1, b2, b3]));
+
+        // Check buffer counts per server
+        assert_eq!(controller.server_buffer_count("Libera".into()), 2);
+        assert_eq!(controller.server_buffer_count("OFTC".into()), 1);
+
+        // Populate unread and highlights
+        let mut hotlist = HashMap::new();
+        hotlist.insert("0x1".to_string(), (2, 0));
+        hotlist.insert("0x2".to_string(), (3, 1));
+        hotlist.insert("0x3".to_string(), (4, 2));
+        controller.handle_relay_event(RelayEvent::HotlistUpdated(hotlist));
+
+        // Aggregated unread / highlight count per server
+        assert_eq!(controller.server_unread_count("Libera".into()), 5);
+        assert_eq!(controller.server_highlight_count("Libera".into()), 1);
+        assert_eq!(controller.server_unread_count("OFTC".into()), 4);
+        assert_eq!(controller.server_highlight_count("OFTC".into()), 2);
+
+        // Initially not collapsed
+        assert!(!controller.is_server_collapsed("Libera".into()));
+        assert!(!controller.is_server_collapsed("libera".into()));
+
+        // Toggle Libera collapsed
+        assert!(controller.toggle_server_collapsed("Libera".into()));
+        assert!(controller.is_server_collapsed("Libera".into()));
+        assert!(controller.is_server_collapsed("libera".into())); // case-insensitive
+
+        let collapsed_list = controller.get_collapsed_servers();
+        assert_eq!(collapsed_list.len(), 1);
+
+        // Toggle Libera expanded again
+        assert!(!controller.toggle_server_collapsed("libera".into()));
+        assert!(!controller.is_server_collapsed("Libera".into()));
+
+        // Explicit set
+        controller.set_server_collapsed("OFTC".into(), true);
+        assert!(controller.is_server_collapsed("OFTC".into()));
+
+        // Test persistence through config
+        let cfg = AppConfig {
+            collapsed_servers: controller.collapsed_servers.iter().cloned().collect(),
+            ..Default::default()
+        };
+        let mut reloaded_controller = RelayController::default();
+        reloaded_controller.apply_config(&cfg);
+        assert!(reloaded_controller.is_server_collapsed("OFTC".into()));
+        assert!(!reloaded_controller.is_server_collapsed("Libera".into()));
     }
 }

@@ -21,6 +21,8 @@ pub struct AppConfig {
     pub auto_reconnect: bool,
     #[serde(default)]
     pub sidebar_server_order: Vec<String>,
+    #[serde(default)]
+    pub collapsed_servers: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -40,6 +42,7 @@ impl Default for AppConfig {
             initial_lines_fetch: 150,
             auto_reconnect: true,
             sidebar_server_order: Vec::new(),
+            collapsed_servers: Vec::new(),
         }
     }
 }
@@ -86,6 +89,19 @@ impl AppConfig {
             }
         }
         self.sidebar_server_order = clean_order;
+
+        let mut clean_collapsed = Vec::new();
+        for s in self.collapsed_servers.drain(..) {
+            let trimmed = s.trim().to_string();
+            if !trimmed.is_empty()
+                && !clean_collapsed
+                    .iter()
+                    .any(|existing: &String| existing.eq_ignore_ascii_case(&trimmed))
+            {
+                clean_collapsed.push(trimmed);
+            }
+        }
+        self.collapsed_servers = clean_collapsed;
     }
 
     pub fn load() -> Self {
@@ -135,6 +151,12 @@ mod tests {
                 " LIBERA ".to_string(),
                 "".to_string(),
             ],
+            collapsed_servers: vec![
+                "Libera".to_string(),
+                " LIBERA ".to_string(),
+                "".to_string(),
+                "OFTC".to_string(),
+            ],
         };
 
         cfg.sanitize();
@@ -148,6 +170,10 @@ mod tests {
         assert_eq!(cfg.timestamp_format, defaults.timestamp_format);
         assert_eq!(cfg.initial_lines_fetch, defaults.initial_lines_fetch);
         assert_eq!(cfg.sidebar_server_order, vec!["libera".to_string()]);
+        assert_eq!(
+            cfg.collapsed_servers,
+            vec!["Libera".to_string(), "OFTC".to_string()]
+        );
         // Valid boolean changes must be preserved
         assert!(cfg.use_tls);
         assert!(!cfg.verify_tls);

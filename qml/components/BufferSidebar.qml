@@ -13,6 +13,62 @@ Rectangle {
     signal openQuickSwitcherRequested()
     signal openSettingsRequested()
 
+    // Map of collapsed server names: e.g. { "Libera": true }
+    property var collapsedMap: ({})
+
+    function isServerCollapsed(serverName) {
+        if (!serverName || filterInput.text.length > 0) return false
+        return !!collapsedMap[serverName]
+    }
+
+    function toggleServerCollapsed(serverName) {
+        if (!serverName) return
+        var copy = Object.assign({}, collapsedMap)
+        if (copy[serverName]) {
+            delete copy[serverName]
+        } else {
+            copy[serverName] = true
+        }
+        collapsedMap = copy
+        relayController.set_server_collapsed(serverName, !!copy[serverName])
+    }
+
+    function expandServer(serverName) {
+        if (collapsedMap[serverName]) {
+            var copy = Object.assign({}, collapsedMap)
+            delete copy[serverName]
+            collapsedMap = copy
+            relayController.set_server_collapsed(serverName, false)
+        }
+    }
+
+    Component.onCompleted: {
+        var list = relayController.get_collapsed_servers()
+        var map = {}
+        for (var i = 0; i < list.length; i++) {
+            map[list[i]] = true
+        }
+        collapsedMap = map
+    }
+
+    Connections {
+        target: relayController
+        function onCollapsed_servers_changed() {
+            var list = relayController.get_collapsed_servers()
+            var map = {}
+            for (var i = 0; i < list.length; i++) {
+                map[list[i]] = true
+            }
+            sidebar.collapsedMap = map
+        }
+        function onActive_buffer_changed() {
+            var activeSrv = relayController.active_buffer_server
+            if (activeSrv && sidebar.collapsedMap[activeSrv]) {
+                sidebar.expandServer(activeSrv)
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -180,39 +236,149 @@ Rectangle {
             Layout.fillHeight: true
             clip: true
             model: relayController.buffer_model
-            spacing: 2
+            spacing: 0
             topMargin: 4
             bottomMargin: 8
+            currentIndex: -1
+            highlightFollowsCurrentItem: false
+            boundsBehavior: Flickable.StopAtBounds
+
+            property real savedContentY: 0
+
+            Connections {
+                target: bufferList.model
+                function onModelAboutToBeReset() {
+                    bufferList.savedContentY = bufferList.contentY
+                }
+                function onModelReset() {
+                    if (bufferList.savedContentY > 0) {
+                        Qt.callLater(function() {
+                            if (bufferList) {
+                                var maxY = Math.max(0, bufferList.contentHeight - bufferList.height + bufferList.bottomMargin)
+                                bufferList.contentY = Math.min(bufferList.savedContentY, maxY)
+                            }
+                        })
+                    }
+                }
+            }
+
+            ScrollBar.vertical: ScrollBar {
+                id: bufferScrollBar
+                policy: ScrollBar.AsNeeded
+                width: 6
+                contentItem: Rectangle {
+                    implicitWidth: 6
+                    radius: 3
+                    color: bufferScrollBar.pressed
+                        ? theme.accentPrimary
+                        : (bufferScrollBar.hovered ? theme.textSecondary : theme.borderSubtle)
+                    opacity: bufferScrollBar.size < 1.0 ? (bufferScrollBar.active || bufferScrollBar.hovered ? 0.9 : 0.4) : 0.0
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+                }
+            }
 
             section.property: "server_name"
             section.criteria: ViewSection.FullString
             section.delegate: Item {
+                id: sectionHeader
                 width: bufferList.width
-                height: 28
+                height: 30
 
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 14
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 4
-                    text: section.toUpperCase()
-                    color: theme.textMuted
-                    font.pixelSize: 10
-                    font.bold: true
-                    font.letterSpacing: 0.8
+                readonly property bool isCollapsed: sidebar.isServerCollapsed(section)
+                readonly property int unreadCount: {
+                    relayController.total_unread_count;
+                    return relayController.server_unread_count(section);
+                }
+                readonly property int highlightCount: {
+                    relayController.total_highlight_count;
+                    return relayController.server_highlight_count(section);
+                }
+                readonly property bool isActiveServer: relayController.active_buffer_server === section
+
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.topMargin: 2
+                    anchors.bottomMargin: 2
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    radius: 6
+                    color: sectionHover.hovered ? theme.bgHover : "transparent"
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 6
+                        anchors.rightMargin: 6
+                        spacing: 6
+
+                        // Collapse/Expand Chevron
+                        Text {
+                            text: sectionHeader.isCollapsed ? "▸" : "▾"
+                            color: sectionHover.hovered ? theme.accentPrimary : theme.textMuted
+                            font.pixelSize: 11
+                            font.bold: true
+                            Layout.preferredWidth: 10
+                        }
+
+                        // Server Name
+                        Text {
+                            text: section.toUpperCase()
+                            color: sectionHeader.isActiveServer || sectionHover.hovered
+                                ? theme.textPrimary
+                                : theme.textMuted
+                            font.pixelSize: 10
+                            font.bold: true
+                            font.letterSpacing: 0.8
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+
+                        // Collapsed Unread / Highlight Badge
+                        Rectangle {
+                            visible: sectionHeader.isCollapsed && (sectionHeader.unreadCount > 0 || sectionHeader.highlightCount > 0)
+                            height: 16
+                            implicitWidth: Math.max(16, srvBadgeText.implicitWidth + 8)
+                            radius: 8
+                            color: sectionHeader.highlightCount > 0 ? theme.badgeHighlight : theme.badgeUnread
+
+                            Text {
+                                id: srvBadgeText
+                                anchors.centerIn: parent
+                                text: sectionHeader.highlightCount > 0 ? sectionHeader.highlightCount : sectionHeader.unreadCount
+                                color: "#ffffff"
+                                font.pixelSize: 9
+                                font.bold: true
+                            }
+                        }
+                    }
+
+                    HoverHandler { id: sectionHover }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: sidebar.toggleServerCollapsed(section)
+                    }
                 }
             }
 
             delegate: Item {
+                id: bufferDelegate
                 width: bufferList.width
-                height: 32
+                readonly property bool isCollapsed: sidebar.isServerCollapsed(model.server_name)
+                visible: !isCollapsed
+                height: isCollapsed ? 0 : 34
+                enabled: !isCollapsed
+                clip: true
 
                 Rectangle {
                     id: rowBg
                     anchors.fill: parent
+                    anchors.topMargin: 1
+                    anchors.bottomMargin: 1
                     anchors.leftMargin: 8
                     anchors.rightMargin: 8
                     radius: 7
+                    visible: !bufferDelegate.isCollapsed
                     color: model.is_active
                         ? theme.bgActive
                         : (rowHover.hovered ? theme.bgHover : "transparent")

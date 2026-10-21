@@ -1,6 +1,6 @@
 use qmetaobject::*;
 
-#[derive(SimpleListItem, Default, Clone, Debug)]
+#[derive(SimpleListItem, Default, Clone, Debug, PartialEq)]
 pub struct BufferItem {
     pub ptr: QString,
     pub number: i32,
