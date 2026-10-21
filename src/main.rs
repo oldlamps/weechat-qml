@@ -4,10 +4,31 @@ mod formatting;
 mod relay;
 mod servers;
 
+use cpp::cpp;
 use cstr::cstr;
 use qmetaobject::*;
 
 use crate::bridge::controller::RelayController;
+
+cpp! {{
+    #include <QtGui/QGuiApplication>
+    #include <QtGui/QClipboard>
+}}
+
+pub fn copy_to_clipboard(text: &str) {
+    let c_str = std::ffi::CString::new(text).unwrap_or_default();
+    let ptr = c_str.as_ptr();
+    unsafe {
+        cpp!([ptr as "const char*"] {
+            if (QGuiApplication::instance()) {
+                QClipboard *clipboard = QGuiApplication::clipboard();
+                if (clipboard) {
+                    clipboard->setText(QString::fromUtf8(ptr));
+                }
+            }
+        });
+    }
+}
 
 qrc!(app_resources,
     "qml" {
@@ -22,6 +43,7 @@ qrc!(app_resources,
         "qml/components/QuickSwitcherModal.qml" as "components/QuickSwitcherModal.qml",
         "qml/components/SettingsDialog.qml" as "components/SettingsDialog.qml",
         "qml/components/ServerManagerDialog.qml" as "components/ServerManagerDialog.qml",
+        "qml/components/QuitConfirmDialog.qml" as "components/QuitConfirmDialog.qml",
     }
 );
 

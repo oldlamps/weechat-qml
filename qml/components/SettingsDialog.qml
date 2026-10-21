@@ -512,6 +512,40 @@ Rectangle {
                                 onClicked: relayController.toggle_auto_reconnect()
                             }
                         }
+
+                        // Confirm on Quit Toggle
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 42
+                            radius: 8
+                            color: quitConfirmHover.hovered ? theme.bgHover : theme.bgSecondary
+                            border.color: theme.borderSubtle
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
+
+                                Text {
+                                    text: "Prompt for confirmation before quitting (Ctrl+Q)"
+                                    color: theme.textPrimary
+                                    font.pixelSize: 13
+                                    Layout.fillWidth: true
+                                }
+
+                                Switch {
+                                    id: quitConfirmSwitch
+                                    checked: relayController.confirm_on_quit
+                                }
+                            }
+
+                            HoverHandler { id: quitConfirmHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: relayController.toggle_confirm_on_quit()
+                            }
+                        }
                     }
                 }
             }

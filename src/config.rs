@@ -19,6 +19,7 @@ pub struct AppConfig {
     pub timestamp_format: String,
     pub initial_lines_fetch: i32,
     pub auto_reconnect: bool,
+    pub confirm_on_quit: bool,
     #[serde(default)]
     pub sidebar_server_order: Vec<String>,
     #[serde(default)]
@@ -41,6 +42,7 @@ impl Default for AppConfig {
             timestamp_format: "%H:%M".to_string(),
             initial_lines_fetch: 150,
             auto_reconnect: true,
+            confirm_on_quit: true,
             sidebar_server_order: Vec::new(),
             collapsed_servers: Vec::new(),
         }
@@ -146,6 +148,7 @@ mod tests {
             timestamp_format: "".to_string(),
             initial_lines_fetch: -5,
             auto_reconnect: false,
+            confirm_on_quit: false,
             sidebar_server_order: vec![
                 "Libera".to_string(),
                 " LIBERA ".to_string(),
@@ -181,5 +184,6 @@ mod tests {
         assert!(!cfg.show_media_previews);
         assert!(!cfg.desktop_notifications);
         assert!(!cfg.auto_reconnect);
+        assert!(!cfg.confirm_on_quit);
     }
 }

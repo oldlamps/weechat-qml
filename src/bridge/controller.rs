@@ -45,6 +45,7 @@ pub struct RelayController {
     pub timestamp_format: qt_property!(QString; NOTIFY preferences_changed),
     pub initial_lines_fetch: qt_property!(i32; NOTIFY preferences_changed),
     pub auto_reconnect: qt_property!(bool; NOTIFY preferences_changed),
+    pub confirm_on_quit: qt_property!(bool; NOTIFY preferences_changed),
 
     // Active buffer metadata properties
     pub active_buffer_ptr: qt_property!(QString; NOTIFY active_buffer_changed),
@@ -118,6 +119,8 @@ pub struct RelayController {
     pub set_timestamp_format: qt_method!(fn(&mut self, format: QString)),
     pub toggle_auto_reconnect: qt_method!(fn(&mut self)),
     pub set_auto_reconnect: qt_method!(fn(&mut self, enabled: bool)),
+    pub toggle_confirm_on_quit: qt_method!(fn(&mut self)),
+    pub set_confirm_on_quit: qt_method!(fn(&mut self, enabled: bool)),
     pub filter_buffers: qt_method!(fn(&mut self, query: QString)),
     pub search_in_buffer: qt_method!(fn(&mut self, query: QString)),
     pub complete_input: qt_method!(fn(&mut self, text: QString, cursor_pos: i32) -> QString),
@@ -161,6 +164,7 @@ pub struct RelayController {
     pub get_saved_password_for_server: qt_method!(fn(&mut self, server_id: QString) -> QString),
     pub select_active_server: qt_method!(fn(&mut self, server_id: QString)),
     pub should_show_server_manager_on_startup: qt_method!(fn(&self) -> bool),
+    pub copy_to_clipboard: qt_method!(fn(&self, text: QString)),
 
     // Internal Rust state
     cmd_tx: Option<mpsc::UnboundedSender<ClientCommand>>,
@@ -313,6 +317,7 @@ impl Default for RelayController {
             timestamp_format: "%H:%M".into(),
             initial_lines_fetch: 150,
             auto_reconnect: true,
+            confirm_on_quit: true,
             active_buffer_ptr: QString::default(),
             active_buffer_name: QString::default(),
             active_buffer_server: QString::default(),
@@ -366,6 +371,8 @@ impl Default for RelayController {
             set_timestamp_format: Default::default(),
             toggle_auto_reconnect: Default::default(),
             set_auto_reconnect: Default::default(),
+            toggle_confirm_on_quit: Default::default(),
+            set_confirm_on_quit: Default::default(),
             filter_buffers: Default::default(),
             search_in_buffer: Default::default(),
             complete_input: Default::default(),
@@ -390,6 +397,7 @@ impl Default for RelayController {
             get_saved_password_for_server: Default::default(),
             select_active_server: Default::default(),
             should_show_server_manager_on_startup: Default::default(),
+            copy_to_clipboard: Default::default(),
             cmd_tx: None,
             buffers_cache: Vec::new(),
             lines_cache: HashMap::new(),
@@ -422,6 +430,7 @@ impl RelayController {
         self.timestamp_format = cfg.timestamp_format.clone().into();
         self.initial_lines_fetch = cfg.initial_lines_fetch;
         self.auto_reconnect = cfg.auto_reconnect;
+        self.confirm_on_quit = cfg.confirm_on_quit;
         self.sidebar_server_order = cfg.sidebar_server_order.clone();
         self.collapsed_servers = cfg.collapsed_servers.iter().cloned().collect();
         self.preferences_changed();
@@ -1148,6 +1157,10 @@ impl RelayController {
         }
     }
 
+    pub fn copy_to_clipboard(&self, text: QString) {
+        crate::copy_to_clipboard(&text.to_string());
+    }
+
     fn rebuild_server_model(&mut self) {
         let active_id = self.server_store.active_server_id.as_deref().unwrap_or("");
         let items: Vec<ServerProfileItem> = self
@@ -1192,6 +1205,19 @@ impl RelayController {
             self.active_buffer_type = buf.buffer_type.clone().into();
             let topic_fmt = format_weechat_message(&buf.title);
             self.active_buffer_topic = topic_fmt.styled_text.into();
+
+            // Auto-expand server section if collapsed so the selected channel is immediately visible
+            let srv_name = buf.server_name.clone();
+            let was_collapsed = self
+                .collapsed_servers
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(&srv_name));
+            if was_collapsed {
+                self.collapsed_servers
+                    .retain(|s| !s.eq_ignore_ascii_case(&srv_name));
+                self.collapsed_servers_changed();
+                self.save_current_config();
+            }
         }
 
         // If lines are not yet cached or empty, fetch the backlog for this buffer
@@ -1255,26 +1281,83 @@ impl RelayController {
     }
 
     pub fn select_next_unread_buffer(&mut self) {
-        // Prioritize buffers with highlights first, then any unread messages
-        if let Some(buf) = self
+        if self.buffers_cache.is_empty() {
+            return;
+        }
+        let active_ptr = normalize_ptr(&self.active_buffer_ptr.to_string());
+        let current_idx = self
             .buffers_cache
             .iter()
+            .position(|b| b.ptr == active_ptr)
+            .unwrap_or(0);
+
+        let count = self.buffers_cache.len();
+        // Check buffers cyclically starting from the one right after the current active buffer
+        let ordered_indices: Vec<usize> = (1..=count)
+            .map(|offset| (current_idx + offset) % count)
+            .collect();
+
+        // 1. Prioritize chat channels & private queries with highlights (mentions) first
+        let highlight_channel = ordered_indices
+            .iter()
+            .map(|&idx| &self.buffers_cache[idx])
             .find(|b| {
-                self.unread_map
-                    .get(&b.ptr)
-                    .map(|u| u.1 > 0)
-                    .unwrap_or(false)
-            })
-            .or_else(|| {
-                self.buffers_cache.iter().find(|b| {
-                    self.unread_map
+                b.ptr != active_ptr
+                    && b.buffer_type != "server"
+                    && self
+                        .unread_map
                         .get(&b.ptr)
-                        .map(|u| u.0 > 0)
+                        .map(|u| u.1 > 0)
                         .unwrap_or(false)
+            });
+
+        // 2. Any other buffer with highlights
+        let any_highlight = highlight_channel.or_else(|| {
+            ordered_indices
+                .iter()
+                .map(|&idx| &self.buffers_cache[idx])
+                .find(|b| {
+                    b.ptr != active_ptr
+                        && self
+                            .unread_map
+                            .get(&b.ptr)
+                            .map(|u| u.1 > 0)
+                            .unwrap_or(false)
                 })
-            })
-            .cloned()
-        {
+        });
+
+        // 3. Prioritize chat channels & private queries with regular unread messages
+        let unread_channel = any_highlight.or_else(|| {
+            ordered_indices
+                .iter()
+                .map(|&idx| &self.buffers_cache[idx])
+                .find(|b| {
+                    b.ptr != active_ptr
+                        && b.buffer_type != "server"
+                        && self
+                            .unread_map
+                            .get(&b.ptr)
+                            .map(|u| u.0 > 0)
+                            .unwrap_or(false)
+                })
+        });
+
+        // 4. Any other buffer with regular unread messages
+        let target_buf = unread_channel.or_else(|| {
+            ordered_indices
+                .iter()
+                .map(|&idx| &self.buffers_cache[idx])
+                .find(|b| {
+                    b.ptr != active_ptr
+                        && self
+                            .unread_map
+                            .get(&b.ptr)
+                            .map(|u| u.0 > 0)
+                            .unwrap_or(false)
+                })
+        });
+
+        if let Some(buf) = target_buf.cloned() {
             self.select_buffer(buf.ptr.into());
         }
     }
@@ -1442,6 +1525,16 @@ impl RelayController {
 
     pub fn set_auto_reconnect(&mut self, enabled: bool) {
         self.auto_reconnect = enabled;
+        self.save_current_config();
+        self.preferences_changed();
+    }
+
+    pub fn toggle_confirm_on_quit(&mut self) {
+        self.set_confirm_on_quit(!self.confirm_on_quit);
+    }
+
+    pub fn set_confirm_on_quit(&mut self, enabled: bool) {
+        self.confirm_on_quit = enabled;
         self.save_current_config();
         self.preferences_changed();
     }
@@ -1968,6 +2061,7 @@ impl RelayController {
             timestamp_format: self.timestamp_format.to_string(),
             initial_lines_fetch: self.initial_lines_fetch,
             auto_reconnect: self.auto_reconnect,
+            confirm_on_quit: self.confirm_on_quit,
             sidebar_server_order: self.sidebar_server_order.clone(),
             collapsed_servers: self.collapsed_servers.iter().cloned().collect(),
         };
@@ -2539,6 +2633,9 @@ mod tests {
         controller.set_auto_reconnect(false);
         assert!(!controller.auto_reconnect);
 
+        controller.set_confirm_on_quit(false);
+        assert!(!controller.confirm_on_quit);
+
         // Verify that AppConfig::load() reflects these saved settings
         let loaded = AppConfig::load();
         assert_eq!(loaded.font_size, 18);
@@ -2549,6 +2646,7 @@ mod tests {
         assert_eq!(loaded.timestamp_format, "%H:%M:%S");
         assert_eq!(loaded.initial_lines_fetch, 250);
         assert!(!loaded.auto_reconnect);
+        assert!(!loaded.confirm_on_quit);
 
         // Verify that instantiating a new RelayController::default() immediately loads these values
         let mut new_controller = RelayController::default();
@@ -2560,21 +2658,26 @@ mod tests {
         assert_eq!(new_controller.timestamp_format.to_string(), "%H:%M:%S");
         assert_eq!(new_controller.initial_lines_fetch, 250);
         assert!(!new_controller.auto_reconnect);
+        assert!(!new_controller.confirm_on_quit);
 
         // Verify toggles flip values, save them, and init_controller preserves them
         new_controller.toggle_desktop_notifications();
         assert!(new_controller.desktop_notifications);
         new_controller.toggle_join_part_quit();
         assert!(!new_controller.show_join_part_quit);
+        new_controller.toggle_confirm_on_quit();
+        assert!(new_controller.confirm_on_quit);
 
         let reloaded_cfg = AppConfig::load();
         assert!(reloaded_cfg.desktop_notifications);
         assert!(!reloaded_cfg.show_join_part_quit);
+        assert!(reloaded_cfg.confirm_on_quit);
 
         let mut restarted_controller = RelayController::default();
         restarted_controller.init_controller();
         assert!(restarted_controller.desktop_notifications);
         assert!(!restarted_controller.show_join_part_quit);
+        assert!(restarted_controller.confirm_on_quit);
     }
 
     #[test]
@@ -2847,5 +2950,178 @@ mod tests {
         // 3. Profile has auto_connect: true AND password saved
         controller.active_server_has_password = true;
         assert!(!controller.should_show_server_manager_on_startup());
+    }
+
+    #[test]
+    fn test_copy_to_clipboard_safe_in_headless_tests() {
+        let controller = RelayController::default();
+        // Should execute cleanly without panic even when no GUI clipboard is available in unit test
+        controller.copy_to_clipboard("test message text".into());
+    }
+
+    #[test]
+    fn test_select_next_unread_buffer_cyclic_navigation() {
+        let mut controller = RelayController::default();
+
+        let b1 = RelayBuffer {
+            ptr: "0x1".to_string(),
+            number: 1,
+            full_name: "irc.libera.#rust".to_string(),
+            short_name: "#rust".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b2 = RelayBuffer {
+            ptr: "0x2".to_string(),
+            number: 2,
+            full_name: "irc.libera.#tokio".to_string(),
+            short_name: "#tokio".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b3 = RelayBuffer {
+            ptr: "0x3".to_string(),
+            number: 3,
+            full_name: "irc.libera.#weechat".to_string(),
+            short_name: "#weechat".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+
+        controller.buffers_cache = vec![b1, b2, b3];
+        controller.select_buffer("0x1".into());
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
+
+        // Set unreads: b2 has regular unread (3), b3 has highlight (1)
+        controller.unread_map.insert("0x2".to_string(), (3, 0));
+        controller.unread_map.insert("0x3".to_string(), (1, 1));
+
+        // 1. Highlight priority: b3 should be selected first even though b2 is next in order
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
+        assert!(!controller.unread_map.contains_key("0x3"));
+
+        // 2. Next unread: b2 is now the only unread buffer
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x2");
+        assert!(!controller.unread_map.contains_key("0x2"));
+
+        // 3. No unreads remaining: calling select_next_unread_buffer stays on b2
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x2");
+
+        // 4. Test cyclic wrap-around:
+        // Currently on b2 ("0x2"). Both b1 ("0x1") and b3 ("0x3") have unread messages.
+        controller.unread_map.insert("0x1".to_string(), (5, 0));
+        controller.unread_map.insert("0x3".to_string(), (2, 0));
+
+        // Starting after b2, cyclic check visits b3 first before wrapping around to b1!
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
+
+        // From b3, wrapping around visits b1
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
+    }
+
+    #[test]
+    fn test_select_next_unread_buffer_across_multiple_servers() {
+        let mut controller = RelayController::default();
+
+        let b1 = RelayBuffer {
+            ptr: "0x1".to_string(),
+            number: 1,
+            full_name: "irc.libera.#rust".to_string(),
+            short_name: "#rust".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b2 = RelayBuffer {
+            ptr: "0x2".to_string(),
+            number: 2,
+            full_name: "irc.libera.#tokio".to_string(),
+            short_name: "#tokio".to_string(),
+            server_name: "Libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b3_server = RelayBuffer {
+            ptr: "0x3".to_string(),
+            number: 3,
+            full_name: "irc.server.oftc".to_string(),
+            short_name: "oftc".to_string(),
+            server_name: "OFTC".to_string(),
+            buffer_type: "server".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b4 = RelayBuffer {
+            ptr: "0x4".to_string(),
+            number: 4,
+            full_name: "irc.oftc.#debian".to_string(),
+            short_name: "#debian".to_string(),
+            server_name: "OFTC".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+
+        controller.buffers_cache = vec![b1, b2, b3_server, b4];
+        controller.collapsed_servers.insert("OFTC".to_string());
+        controller.select_buffer("0x1".into());
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
+        assert!(controller.is_server_collapsed("OFTC".into()));
+
+        // Libera #tokio (0x2) has unread 1; OFTC raw server (0x3) has unread notice 1; OFTC #debian (0x4) has unread 2
+        controller.unread_map.insert("0x2".to_string(), (1, 0));
+        controller.unread_map.insert("0x3".to_string(), (1, 0));
+        controller.unread_map.insert("0x4".to_string(), (2, 0));
+
+        // 1. First jump from #rust on Libera goes to #tokio on Libera
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x2");
+        assert_eq!(controller.active_buffer_server.to_string(), "Libera");
+        assert!(!controller.unread_map.contains_key("0x2"));
+
+        // 2. Second jump from #tokio on Libera jumps across servers to #debian on OFTC (prioritizing chat channels over raw server log 0x3!)
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x4");
+        assert_eq!(controller.active_buffer_name.to_string(), "#debian");
+        assert_eq!(controller.active_buffer_server.to_string(), "OFTC");
+        assert!(!controller.unread_map.contains_key("0x4"));
+
+        // Selecting #debian on OFTC auto-expanded OFTC
+        assert!(!controller.is_server_collapsed("OFTC".into()));
+
+        // 3. Third jump visits raw server log 0x3 (the only buffer left with unread)
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
+
+        // 4. Now all buffers are read. Further calls do not change buffer
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
+
+        // 5. Simulate new message arriving on Libera (#rust: 0x1)
+        controller.unread_map.insert("0x1".to_string(), (3, 0));
+        // Calling select_next_unread_buffer jumps from OFTC (0x3) back to Libera (0x1)!
+        controller.select_next_unread_buffer();
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
+        assert_eq!(controller.active_buffer_server.to_string(), "Libera");
     }
 }

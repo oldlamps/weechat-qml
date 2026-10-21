@@ -172,6 +172,16 @@ Item {
             onNickClicked: function(nick) {
                 feedRoot.mentionNickRequested(nick)
             }
+            onContextMenuRequested: function(targetEdit, selSnippet, plainText, senderNick, timeStr, linkUrl, isAction) {
+                messageContextMenu.targetEdit = targetEdit
+                messageContextMenu.selectedSnippet = selSnippet
+                messageContextMenu.messageBodyText = plainText
+                messageContextMenu.senderNick = senderNick
+                messageContextMenu.messageTime = timeStr
+                messageContextMenu.targetLink = linkUrl
+                messageContextMenu.isActionMessage = isAction
+                messageContextMenu.popup()
+            }
         }
 
         ScrollBar.vertical: ScrollBar {
@@ -226,6 +236,279 @@ Item {
             cursorShape: Qt.PointingHandCursor
             onClicked: {
                 feedRoot.scrollToBottom()
+            }
+        }
+    }
+
+    // Message Context Menu for text selection, message copying, links, etc.
+    Menu {
+        id: messageContextMenu
+
+        property var targetEdit: null
+        property string selectedSnippet: ""
+        property string messageBodyText: ""
+        property string senderNick: ""
+        property string messageTime: ""
+        property string targetLink: ""
+        property bool isActionMessage: false
+
+        topPadding: 6
+        bottomMargin: 6
+        leftPadding: 6
+        rightPadding: 6
+
+        background: Rectangle {
+            implicitWidth: 230
+            color: theme.bgElevated
+            border.color: theme.borderSubtle
+            border.width: 1
+            radius: 8
+        }
+
+        MenuItem {
+            id: copySelItem
+            visible: messageContextMenu.selectedSnippet.length > 0
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "📋"; font.pixelSize: 12 }
+                Text {
+                    text: "Copy Selection"
+                    color: copySelItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: "Ctrl+C"
+                    color: theme.textMuted
+                    font.family: theme.fontSans
+                    font.pixelSize: 10
+                }
+            }
+            background: Rectangle {
+                color: copySelItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                if (messageContextMenu.selectedSnippet.length > 0) {
+                    relayController.copy_to_clipboard(messageContextMenu.selectedSnippet)
+                }
+            }
+        }
+
+        MenuItem {
+            id: copyMsgItem
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "💬"; font.pixelSize: 12 }
+                Text {
+                    text: "Copy Message"
+                    color: copyMsgItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: copyMsgItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                if (messageContextMenu.messageBodyText.length > 0) {
+                    relayController.copy_to_clipboard(messageContextMenu.messageBodyText)
+                }
+            }
+        }
+
+        MenuItem {
+            id: copyFormattedItem
+            visible: messageContextMenu.senderNick.length > 0
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "🕒"; font.pixelSize: 12 }
+                Text {
+                    text: "Copy with Nick & Time"
+                    color: copyFormattedItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: copyFormattedItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                var formatted = ""
+                if (messageContextMenu.isActionMessage) {
+                    formatted = "[" + messageContextMenu.messageTime + "] * " + messageContextMenu.senderNick + " " + messageContextMenu.messageBodyText
+                } else {
+                    formatted = "[" + messageContextMenu.messageTime + "] <" + messageContextMenu.senderNick + "> " + messageContextMenu.messageBodyText
+                }
+                relayController.copy_to_clipboard(formatted)
+            }
+        }
+
+        MenuSeparator {
+            visible: messageContextMenu.targetLink.length > 0
+            contentItem: Rectangle {
+                implicitWidth: parent.width
+                implicitHeight: 1
+                color: theme.borderSubtle
+            }
+        }
+
+        MenuItem {
+            id: copyLinkItem
+            visible: messageContextMenu.targetLink.length > 0
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "🔗"; font.pixelSize: 12 }
+                Text {
+                    text: "Copy Link Address"
+                    color: copyLinkItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: copyLinkItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                if (messageContextMenu.targetLink.length > 0) {
+                    relayController.copy_to_clipboard(messageContextMenu.targetLink)
+                }
+            }
+        }
+
+        MenuItem {
+            id: openLinkItem
+            visible: messageContextMenu.targetLink.length > 0
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "↗"; font.pixelSize: 12 }
+                Text {
+                    text: "Open Link in Browser"
+                    color: openLinkItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: openLinkItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                if (messageContextMenu.targetLink.length > 0) {
+                    Qt.openUrlExternally(messageContextMenu.targetLink)
+                }
+            }
+        }
+
+        MenuSeparator {
+            contentItem: Rectangle {
+                implicitWidth: parent.width
+                implicitHeight: 1
+                color: theme.borderSubtle
+            }
+        }
+
+        MenuItem {
+            id: copyNickItem
+            visible: messageContextMenu.senderNick.length > 0
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "👤"; font.pixelSize: 12 }
+                Text {
+                    text: "Copy Nick (" + messageContextMenu.senderNick + ")"
+                    color: copyNickItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: copyNickItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                if (messageContextMenu.senderNick.length > 0) {
+                    relayController.copy_to_clipboard(messageContextMenu.senderNick)
+                }
+            }
+        }
+
+        MenuItem {
+            id: mentionNickItem
+            visible: messageContextMenu.senderNick.length > 0
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "@"; font.pixelSize: 12; font.bold: true; color: theme.accentCyan }
+                Text {
+                    text: "Mention @" + messageContextMenu.senderNick
+                    color: mentionNickItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: mentionNickItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                if (messageContextMenu.senderNick.length > 0) {
+                    feedRoot.mentionNickRequested(messageContextMenu.senderNick)
+                }
+            }
+        }
+
+        MenuSeparator {
+            contentItem: Rectangle {
+                implicitWidth: parent.width
+                implicitHeight: 1
+                color: theme.borderSubtle
+            }
+        }
+
+        MenuItem {
+            id: selectAllItem
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "📑"; font.pixelSize: 12 }
+                Text {
+                    text: "Select All"
+                    color: selectAllItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: "Ctrl+A"
+                    color: theme.textMuted
+                    font.family: theme.fontSans
+                    font.pixelSize: 10
+                }
+            }
+            background: Rectangle {
+                color: selectAllItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                if (messageContextMenu.targetEdit) {
+                    messageContextMenu.targetEdit.selectAll()
+                    messageContextMenu.targetEdit.forceActiveFocus()
+                }
             }
         }
     }

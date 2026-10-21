@@ -50,4 +50,5 @@ fn main() {
     println!("cargo:rustc-link-lib=Qt6QuickControls2");
     println!("cargo:rustc-link-lib=Qt6Multimedia");
     println!("cargo:rerun-if-changed=qml/");
+    println!("cargo:rerun-if-changed=src/main.rs");
 }

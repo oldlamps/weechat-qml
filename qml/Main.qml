@@ -25,6 +25,23 @@ ApplicationWindow {
 
     property bool showLeftSidebar: true
     property bool showRightSidebar: true
+    property bool forceClose: false
+
+    function requestQuit() {
+        if (relay.confirm_on_quit && !forceClose) {
+            quitConfirmDialog.openDialog()
+        } else {
+            forceClose = true
+            Qt.quit()
+        }
+    }
+
+    onClosing: function(close) {
+        if (relay.confirm_on_quit && !forceClose) {
+            close.accepted = false
+            quitConfirmDialog.openDialog()
+        }
+    }
 
     Theme {
         id: appTheme
@@ -103,7 +120,18 @@ ApplicationWindow {
         onActivated: messageListView.scrollToBottom()
     }
 
-    // Next Unread Hotkey
+    // Application Quit Shortcut
+    Shortcut {
+        sequence: "Ctrl+Q"
+        onActivated: rootWindow.requestQuit()
+    }
+
+    // Next Unread Hotkeys (Ctrl+U and classic Alt+A)
+    Shortcut {
+        sequence: "Ctrl+U"
+        onActivated: relay.select_next_unread_buffer()
+    }
+
     Shortcut {
         sequence: "Alt+A"
         onActivated: relay.select_next_unread_buffer()
@@ -183,6 +211,14 @@ ApplicationWindow {
                 onPageDownRequested: messageListView.scrollPageDown()
                 onHomeRequested: messageListView.scrollToTop()
                 onEndRequested: messageListView.scrollToBottom()
+                onQuitRequested: rootWindow.requestQuit()
+                onQuickSwitcherRequested: {
+                    if (quickSwitcher.visible) {
+                        quickSwitcher.closeModal()
+                    } else {
+                        quickSwitcher.openModal()
+                    }
+                }
             }
         }
 
@@ -218,5 +254,16 @@ ApplicationWindow {
         id: serverManagerDialog
         relayController: relay
         theme: appTheme
+    }
+
+    // Quit Confirmation Modal
+    QuitConfirmDialog {
+        id: quitConfirmDialog
+        relayController: relay
+        theme: appTheme
+        onQuitConfirmed: {
+            rootWindow.forceClose = true
+            Qt.quit()
+        }
     }
 }

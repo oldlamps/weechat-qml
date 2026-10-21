@@ -19,6 +19,7 @@ Item {
     property string ytAuthor: ""
     property string resolvedImageUrl: ""
     signal nickClicked(string nick)
+    signal contextMenuRequested(var targetEdit, string selectedText, string plainText, string senderNick, string timeStr, string linkUrl, bool isAction)
 
     Connections {
         target: relayController
@@ -265,27 +266,39 @@ Item {
                         }
                     }
 
-                    // Message Text Body
-                    Text {
+                    // Message Text Body (Selectable with mouse highlight, copy, links)
+                    TextEdit {
+                        id: messageBody
                         Layout.fillWidth: true
+                        readOnly: true
+                        selectByMouse: true
+                        cursorVisible: false
+                        activeFocusOnPress: true
                         text: {
                             if (model.is_action) {
                                 return "<i>* " + model.styled_text + "</i>"
                             }
                             return model.styled_text
                         }
-                        textFormat: Text.StyledText
-                        wrapMode: Text.Wrap
+                        textFormat: TextEdit.RichText
+                        wrapMode: TextEdit.Wrap
                         color: {
                             if (model.is_system) return theme.textMuted
                             if (model.is_action) return theme.accentCyan
                             return theme.textPrimary
                         }
+                        selectionColor: Qt.alpha(theme.accentPrimary, 0.35)
+                        selectedTextColor: theme.textPrimary
                         font.pixelSize: model.is_system ? Math.max(10, theme.baseFontSize - 2) : theme.baseFontSize
                         font.family: theme.fontSans
-                        lineHeight: 1.25
+
                         onLinkActivated: function(link) {
                             Qt.openUrlExternally(link)
+                        }
+
+                        HoverHandler {
+                            id: linkHover
+                            cursorShape: messageBody.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
                         }
                     }
 
@@ -792,6 +805,21 @@ Item {
             }
 
             HoverHandler { id: rowHover }
+
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: function(event) {
+                    msgRoot.contextMenuRequested(
+                        messageBody,
+                        messageBody.selectedText,
+                        model.plain_text,
+                        model.prefix_plain,
+                        model.time_str,
+                        messageBody.hoveredLink,
+                        model.is_action
+                    )
+                }
+            }
         }
     }
 }

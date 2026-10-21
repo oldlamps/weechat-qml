@@ -59,6 +59,11 @@ Rectangle {
                     color: theme.textPrimary
                     font.pixelSize: 16
                     font.bold: true
+
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        onTapped: headerContextMenu.popup()
+                    }
                 }
 
                 Rectangle {
@@ -121,6 +126,11 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 onLinkActivated: function(link) { Qt.openUrlExternally(link) }
+
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: headerContextMenu.popup()
+                }
             }
 
             // In-Buffer Search Box (when active)
@@ -312,6 +322,70 @@ Rectangle {
             Layout.fillWidth: true
             height: 1
             color: theme.borderSubtle
+        }
+    }
+
+    Menu {
+        id: headerContextMenu
+        topPadding: 6
+        bottomMargin: 6
+        leftPadding: 6
+        rightPadding: 6
+
+        background: Rectangle {
+            implicitWidth: 200
+            color: theme.bgElevated
+            border.color: theme.borderSubtle
+            border.width: 1
+            radius: 8
+        }
+
+        MenuItem {
+            id: copyTopicItem
+            visible: relayController.active_buffer_topic.length > 0
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "📌"; font.pixelSize: 12 }
+                Text {
+                    text: "Copy Topic"
+                    color: copyTopicItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: copyTopicItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                relayController.copy_to_clipboard(relayController.active_buffer_topic)
+            }
+        }
+
+        MenuItem {
+            id: copyChanItem
+            visible: relayController.active_buffer_name.length > 0
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text { text: "#"; font.pixelSize: 13; font.bold: true; color: theme.accentCyan }
+                Text {
+                    text: "Copy Channel Name"
+                    color: copyChanItem.highlighted ? theme.textPrimary : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: copyChanItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                relayController.copy_to_clipboard(relayController.active_buffer_name)
+            }
         }
     }
 }

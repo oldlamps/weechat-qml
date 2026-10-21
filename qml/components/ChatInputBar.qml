@@ -16,6 +16,8 @@ Rectangle {
     signal pageDownRequested()
     signal homeRequested()
     signal endRequested()
+    signal quitRequested()
+    signal quickSwitcherRequested()
 
     function insertMention(nick) {
         if (nick.length === 0) return
@@ -95,6 +97,15 @@ Rectangle {
                     }
 
                     Keys.onTabPressed: function(event) {
+                        if (event.modifiers & Qt.ControlModifier) {
+                            event.accepted = true
+                            if (event.modifiers & Qt.ShiftModifier) {
+                                relayController.select_previous_buffer()
+                            } else {
+                                relayController.select_next_buffer()
+                            }
+                            return
+                        }
                         event.accepted = true
                         var completed = relayController.complete_input(chatInput.text, chatInput.cursorPosition)
                         chatInput.text = completed
@@ -102,6 +113,37 @@ Rectangle {
                     }
 
                     Keys.onPressed: function(event) {
+                        // Unread channel jumping: Ctrl+U and Alt+A (bypasses readline delete kill-line backward)
+                        if (((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_U) ||
+                            ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_A)) {
+                            event.accepted = true
+                            relayController.select_next_unread_buffer()
+                            return
+                        }
+                        // Quit application: Ctrl+Q
+                        if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Q) {
+                            event.accepted = true
+                            inputRoot.quitRequested()
+                            return
+                        }
+                        // Quick Switcher: Ctrl+K (bypasses readline delete kill-line forward)
+                        if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_K) {
+                            event.accepted = true
+                            inputRoot.quickSwitcherRequested()
+                            return
+                        }
+                        // Buffer navigation: Ctrl+PageDown / Ctrl+PageUp
+                        if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_PageDown) {
+                            event.accepted = true
+                            relayController.select_next_buffer()
+                            return
+                        }
+                        if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_PageUp) {
+                            event.accepted = true
+                            relayController.select_previous_buffer()
+                            return
+                        }
+
                         if (event.key === Qt.Key_PageUp) {
                             event.accepted = true
                             inputRoot.pageUpRequested()
