@@ -547,6 +547,40 @@ Rectangle {
                                 onClicked: relayController.toggle_confirm_on_quit()
                             }
                         }
+
+                        // Close to System Tray Toggle
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 42
+                            radius: 8
+                            color: closeToTrayHover.hovered ? theme.bgHover : theme.bgSecondary
+                            border.color: theme.borderSubtle
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
+
+                                Text {
+                                    text: "Close window to system tray instead of quitting"
+                                    color: theme.textPrimary
+                                    font.pixelSize: 13
+                                    Layout.fillWidth: true
+                                }
+
+                                Switch {
+                                    id: closeToTraySwitch
+                                    checked: relayController.close_to_tray
+                                }
+                            }
+
+                            HoverHandler { id: closeToTrayHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: relayController.toggle_close_to_tray()
+                            }
+                        }
                     }
 
                     Rectangle {

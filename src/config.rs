@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub initial_lines_fetch: i32,
     pub auto_reconnect: bool,
     pub confirm_on_quit: bool,
+    pub close_to_tray: bool,
     pub custom_browser: String,
     #[serde(default)]
     pub sidebar_server_order: Vec<String>,
@@ -44,6 +45,7 @@ impl Default for AppConfig {
             initial_lines_fetch: 150,
             auto_reconnect: true,
             confirm_on_quit: true,
+            close_to_tray: true,
             custom_browser: String::new(),
             sidebar_server_order: Vec::new(),
             collapsed_servers: Vec::new(),
@@ -165,6 +167,7 @@ mod tests {
             initial_lines_fetch: -5,
             auto_reconnect: false,
             confirm_on_quit: false,
+            close_to_tray: false,
             custom_browser: "  firefox --private  ".to_string(),
             sidebar_server_order: vec![
                 "Libera".to_string(),
@@ -203,5 +206,6 @@ mod tests {
         assert!(!cfg.desktop_notifications);
         assert!(!cfg.auto_reconnect);
         assert!(!cfg.confirm_on_quit);
+        assert!(!cfg.close_to_tray);
     }
 }

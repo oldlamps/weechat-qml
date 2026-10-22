@@ -17,6 +17,7 @@ Rectangle {
     signal homeRequested()
     signal endRequested()
     signal quitRequested()
+    signal closeWindowRequested()
     signal quickSwitcherRequested()
 
     function insertMention(nick) {
@@ -124,6 +125,12 @@ Rectangle {
                         if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Q) {
                             event.accepted = true
                             inputRoot.quitRequested()
+                            return
+                        }
+                        // Close window / to tray: Ctrl+W
+                        if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_W) {
+                            event.accepted = true
+                            inputRoot.closeWindowRequested()
                             return
                         }
                         // Quick Switcher: Ctrl+K (bypasses readline delete kill-line forward)

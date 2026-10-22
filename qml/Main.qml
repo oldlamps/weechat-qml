@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Qt.labs.platform as Platform
 import WeeChatQml 1.0
 import "components"
 
@@ -27,8 +28,21 @@ ApplicationWindow {
     property bool showRightSidebar: true
     property bool forceClose: false
 
+    function toggleWindowVisibility() {
+        if (rootWindow.visible && rootWindow.active) {
+            rootWindow.hide()
+        } else {
+            rootWindow.show()
+            rootWindow.raise()
+            rootWindow.requestActivate()
+        }
+    }
+
     function requestQuit() {
         if (relay.confirm_on_quit && !forceClose) {
+            rootWindow.show()
+            rootWindow.raise()
+            rootWindow.requestActivate()
             quitConfirmDialog.openDialog()
         } else {
             forceClose = true
@@ -37,9 +51,55 @@ ApplicationWindow {
     }
 
     onClosing: function(close) {
-        if (relay.confirm_on_quit && !forceClose) {
+        if (forceClose) {
+            return
+        }
+        if (relay.close_to_tray) {
+            close.accepted = false
+            rootWindow.hide()
+            return
+        }
+        if (relay.confirm_on_quit) {
             close.accepted = false
             quitConfirmDialog.openDialog()
+        }
+    }
+
+    Platform.SystemTrayIcon {
+        id: systemTray
+        visible: true
+        icon.name: "weechat"
+        icon.source: "qrc:/icons/weechat.png"
+        icon.mask: false
+        tooltip: {
+            var tip = "WeeChat QML"
+            if (relay.active_buffer_name.length > 0) {
+                tip += " (" + relay.active_buffer_name + ")"
+            }
+            if (relay.total_unread_count > 0) {
+                tip = "[" + relay.total_unread_count + " unread] " + tip
+            }
+            return tip
+        }
+
+        menu: Platform.Menu {
+            Platform.MenuItem {
+                text: (rootWindow.visible && rootWindow.active) ? "Hide to System Tray" : "Restore WeeChat QML"
+                onTriggered: rootWindow.toggleWindowVisibility()
+            }
+
+            Platform.MenuSeparator {}
+
+            Platform.MenuItem {
+                text: "Quit WeeChat QML"
+                onTriggered: rootWindow.requestQuit()
+            }
+        }
+
+        onActivated: function(reason) {
+            if (reason === Platform.SystemTrayIcon.Trigger || reason === Platform.SystemTrayIcon.DoubleClick) {
+                rootWindow.toggleWindowVisibility()
+            }
         }
     }
 
@@ -124,6 +184,12 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+Q"
         onActivated: rootWindow.requestQuit()
+    }
+
+    // Window Close Shortcut (Ctrl+W)
+    Shortcut {
+        sequence: "Ctrl+W"
+        onActivated: rootWindow.close()
     }
 
     // Next Unread Hotkeys (Ctrl+U and classic Alt+A)
@@ -212,6 +278,7 @@ ApplicationWindow {
                 onHomeRequested: messageListView.scrollToTop()
                 onEndRequested: messageListView.scrollToBottom()
                 onQuitRequested: rootWindow.requestQuit()
+                onCloseWindowRequested: rootWindow.close()
                 onQuickSwitcherRequested: {
                     if (quickSwitcher.visible) {
                         quickSwitcher.closeModal()

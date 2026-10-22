@@ -13,6 +13,7 @@ use crate::bridge::controller::RelayController;
 cpp! {{
     #include <QtGui/QGuiApplication>
     #include <QtGui/QClipboard>
+    #include <QtGui/QIcon>
 }}
 
 pub fn copy_to_clipboard(text: &str) {
@@ -44,6 +45,10 @@ qrc!(app_resources,
         "qml/components/SettingsDialog.qml" as "components/SettingsDialog.qml",
         "qml/components/ServerManagerDialog.qml" as "components/ServerManagerDialog.qml",
         "qml/components/QuitConfirmDialog.qml" as "components/QuitConfirmDialog.qml",
+    },
+    "icons" {
+        "assets/weechat.png" as "weechat.png",
+        "assets/weechat.svg" as "weechat.svg",
     }
 );
 
@@ -53,6 +58,16 @@ fn main() {
     qml_register_type::<RelayController>(cstr!("WeeChatQml"), 1, 0, cstr!("RelayController"));
 
     let mut engine = QmlEngine::new();
+
+    unsafe {
+        cpp!([] {
+            if (QGuiApplication::instance()) {
+                QIcon icon(":/icons/weechat.png");
+                QGuiApplication::setWindowIcon(icon);
+            }
+        });
+    }
+
     engine.load_file("qrc:/qml/Main.qml".into());
     engine.exec();
 }

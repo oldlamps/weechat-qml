@@ -46,6 +46,7 @@ pub struct RelayController {
     pub initial_lines_fetch: qt_property!(i32; NOTIFY preferences_changed),
     pub auto_reconnect: qt_property!(bool; NOTIFY preferences_changed),
     pub confirm_on_quit: qt_property!(bool; NOTIFY preferences_changed),
+    pub close_to_tray: qt_property!(bool; NOTIFY preferences_changed),
     pub custom_browser: qt_property!(QString; NOTIFY preferences_changed),
 
     // Active buffer metadata properties
@@ -122,6 +123,8 @@ pub struct RelayController {
     pub set_auto_reconnect: qt_method!(fn(&mut self, enabled: bool)),
     pub toggle_confirm_on_quit: qt_method!(fn(&mut self)),
     pub set_confirm_on_quit: qt_method!(fn(&mut self, enabled: bool)),
+    pub toggle_close_to_tray: qt_method!(fn(&mut self)),
+    pub set_close_to_tray: qt_method!(fn(&mut self, enabled: bool)),
     pub set_custom_browser: qt_method!(fn(&mut self, browser: QString)),
     pub open_url: qt_method!(fn(&self, url: QString)),
     pub filter_buffers: qt_method!(fn(&mut self, query: QString)),
@@ -321,6 +324,7 @@ impl Default for RelayController {
             initial_lines_fetch: 150,
             auto_reconnect: true,
             confirm_on_quit: true,
+            close_to_tray: true,
             custom_browser: QString::default(),
             active_buffer_ptr: QString::default(),
             active_buffer_name: QString::default(),
@@ -377,6 +381,8 @@ impl Default for RelayController {
             set_auto_reconnect: Default::default(),
             toggle_confirm_on_quit: Default::default(),
             set_confirm_on_quit: Default::default(),
+            toggle_close_to_tray: Default::default(),
+            set_close_to_tray: Default::default(),
             set_custom_browser: Default::default(),
             open_url: Default::default(),
             filter_buffers: Default::default(),
@@ -437,6 +443,7 @@ impl RelayController {
         self.initial_lines_fetch = cfg.initial_lines_fetch;
         self.auto_reconnect = cfg.auto_reconnect;
         self.confirm_on_quit = cfg.confirm_on_quit;
+        self.close_to_tray = cfg.close_to_tray;
         self.custom_browser = cfg.custom_browser.clone().into();
         self.sidebar_server_order = cfg.sidebar_server_order.clone();
         self.collapsed_servers = cfg.collapsed_servers.iter().cloned().collect();
@@ -1547,6 +1554,16 @@ impl RelayController {
         self.preferences_changed();
     }
 
+    pub fn toggle_close_to_tray(&mut self) {
+        self.set_close_to_tray(!self.close_to_tray);
+    }
+
+    pub fn set_close_to_tray(&mut self, enabled: bool) {
+        self.close_to_tray = enabled;
+        self.save_current_config();
+        self.preferences_changed();
+    }
+
     pub fn set_custom_browser(&mut self, browser: QString) {
         self.custom_browser = browser.to_string().trim().into();
         self.save_current_config();
@@ -2100,6 +2117,7 @@ impl RelayController {
             initial_lines_fetch: self.initial_lines_fetch,
             auto_reconnect: self.auto_reconnect,
             confirm_on_quit: self.confirm_on_quit,
+            close_to_tray: self.close_to_tray,
             custom_browser: self.custom_browser.to_string(),
             sidebar_server_order: self.sidebar_server_order.clone(),
             collapsed_servers: self.collapsed_servers.iter().cloned().collect(),
@@ -2745,6 +2763,9 @@ mod tests {
         controller.set_confirm_on_quit(false);
         assert!(!controller.confirm_on_quit);
 
+        controller.set_close_to_tray(false);
+        assert!(!controller.close_to_tray);
+
         controller.set_custom_browser("firefox --new-tab".into());
         assert_eq!(controller.custom_browser.to_string(), "firefox --new-tab");
 
@@ -2759,6 +2780,7 @@ mod tests {
         assert_eq!(loaded.initial_lines_fetch, 250);
         assert!(!loaded.auto_reconnect);
         assert!(!loaded.confirm_on_quit);
+        assert!(!loaded.close_to_tray);
         assert_eq!(loaded.custom_browser, "firefox --new-tab");
 
         // Verify that instantiating a new RelayController::default() immediately loads these values
@@ -2772,6 +2794,7 @@ mod tests {
         assert_eq!(new_controller.initial_lines_fetch, 250);
         assert!(!new_controller.auto_reconnect);
         assert!(!new_controller.confirm_on_quit);
+        assert!(!new_controller.close_to_tray);
         assert_eq!(
             new_controller.custom_browser.to_string(),
             "firefox --new-tab"
@@ -2784,17 +2807,21 @@ mod tests {
         assert!(!new_controller.show_join_part_quit);
         new_controller.toggle_confirm_on_quit();
         assert!(new_controller.confirm_on_quit);
+        new_controller.toggle_close_to_tray();
+        assert!(new_controller.close_to_tray);
 
         let reloaded_cfg = AppConfig::load();
         assert!(reloaded_cfg.desktop_notifications);
         assert!(!reloaded_cfg.show_join_part_quit);
         assert!(reloaded_cfg.confirm_on_quit);
+        assert!(reloaded_cfg.close_to_tray);
 
         let mut restarted_controller = RelayController::default();
         restarted_controller.init_controller();
         assert!(restarted_controller.desktop_notifications);
         assert!(!restarted_controller.show_join_part_quit);
         assert!(restarted_controller.confirm_on_quit);
+        assert!(restarted_controller.close_to_tray);
         assert_eq!(
             restarted_controller.custom_browser.to_string(),
             "firefox --new-tab"
