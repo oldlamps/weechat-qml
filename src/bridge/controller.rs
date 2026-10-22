@@ -46,6 +46,7 @@ pub struct RelayController {
     pub initial_lines_fetch: qt_property!(i32; NOTIFY preferences_changed),
     pub auto_reconnect: qt_property!(bool; NOTIFY preferences_changed),
     pub confirm_on_quit: qt_property!(bool; NOTIFY preferences_changed),
+    pub custom_browser: qt_property!(QString; NOTIFY preferences_changed),
 
     // Active buffer metadata properties
     pub active_buffer_ptr: qt_property!(QString; NOTIFY active_buffer_changed),
@@ -121,6 +122,8 @@ pub struct RelayController {
     pub set_auto_reconnect: qt_method!(fn(&mut self, enabled: bool)),
     pub toggle_confirm_on_quit: qt_method!(fn(&mut self)),
     pub set_confirm_on_quit: qt_method!(fn(&mut self, enabled: bool)),
+    pub set_custom_browser: qt_method!(fn(&mut self, browser: QString)),
+    pub open_url: qt_method!(fn(&self, url: QString)),
     pub filter_buffers: qt_method!(fn(&mut self, query: QString)),
     pub search_in_buffer: qt_method!(fn(&mut self, query: QString)),
     pub complete_input: qt_method!(fn(&mut self, text: QString, cursor_pos: i32) -> QString),
@@ -318,6 +321,7 @@ impl Default for RelayController {
             initial_lines_fetch: 150,
             auto_reconnect: true,
             confirm_on_quit: true,
+            custom_browser: QString::default(),
             active_buffer_ptr: QString::default(),
             active_buffer_name: QString::default(),
             active_buffer_server: QString::default(),
@@ -373,6 +377,8 @@ impl Default for RelayController {
             set_auto_reconnect: Default::default(),
             toggle_confirm_on_quit: Default::default(),
             set_confirm_on_quit: Default::default(),
+            set_custom_browser: Default::default(),
+            open_url: Default::default(),
             filter_buffers: Default::default(),
             search_in_buffer: Default::default(),
             complete_input: Default::default(),
@@ -431,6 +437,7 @@ impl RelayController {
         self.initial_lines_fetch = cfg.initial_lines_fetch;
         self.auto_reconnect = cfg.auto_reconnect;
         self.confirm_on_quit = cfg.confirm_on_quit;
+        self.custom_browser = cfg.custom_browser.clone().into();
         self.sidebar_server_order = cfg.sidebar_server_order.clone();
         self.collapsed_servers = cfg.collapsed_servers.iter().cloned().collect();
         self.preferences_changed();
@@ -676,6 +683,7 @@ impl RelayController {
                 self.merge_lines(&norm_ptr, lines);
                 if is_current {
                     self.rebuild_message_model();
+                    self.new_message_arrived();
                 }
             }
             RelayEvent::LineAdded(mut line) => {
@@ -1539,6 +1547,23 @@ impl RelayController {
         self.preferences_changed();
     }
 
+    pub fn set_custom_browser(&mut self, browser: QString) {
+        self.custom_browser = browser.to_string().trim().into();
+        self.save_current_config();
+        self.preferences_changed();
+    }
+
+    pub fn open_url(&self, url: QString) {
+        let u = url.to_string();
+        if u.is_empty() {
+            return;
+        }
+        let browser = self.custom_browser.to_string();
+        std::thread::spawn(move || {
+            open_url_with_browser(&u, &browser);
+        });
+    }
+
     pub fn filter_buffers(&mut self, query: QString) {
         self.buffer_filter_query = query.to_string().trim().to_lowercase();
         self.rebuild_buffer_model();
@@ -1579,10 +1604,11 @@ impl RelayController {
         if u.is_empty() {
             return;
         }
+        let browser = self.custom_browser.to_string();
         std::thread::spawn(move || {
             let res = std::process::Command::new("mpv").arg(&u).spawn();
             if res.is_err() {
-                let _ = std::process::Command::new("xdg-open").arg(&u).spawn();
+                open_url_with_browser(&u, &browser);
             }
         });
     }
@@ -2074,6 +2100,7 @@ impl RelayController {
             initial_lines_fetch: self.initial_lines_fetch,
             auto_reconnect: self.auto_reconnect,
             confirm_on_quit: self.confirm_on_quit,
+            custom_browser: self.custom_browser.to_string(),
             sidebar_server_order: self.sidebar_server_order.clone(),
             collapsed_servers: self.collapsed_servers.iter().cloned().collect(),
         };
@@ -2218,6 +2245,76 @@ fn format_date_header(ts: i64) -> String {
         dt.format("%A, %B %-d, %Y").to_string()
     } else {
         String::new()
+    }
+}
+
+pub fn split_command_args(cmd: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escaped = false;
+
+    for ch in cmd.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '\'' && !in_double_quote {
+            in_single_quote = !in_single_quote;
+        } else if ch == '"' && !in_single_quote {
+            in_double_quote = !in_double_quote;
+        } else if ch.is_whitespace() && !in_single_quote && !in_double_quote {
+            if !current.is_empty() {
+                args.push(current);
+                current = String::new();
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
+}
+
+pub fn open_url_with_browser(url: &str, custom_browser: &str) {
+    let url = url.trim();
+    if url.is_empty() {
+        return;
+    }
+
+    let custom = custom_browser.trim();
+    let is_default = custom.is_empty()
+        || custom.eq_ignore_ascii_case("default")
+        || custom.eq_ignore_ascii_case("system");
+
+    if !is_default {
+        let parts = split_command_args(custom);
+        if let Some((program, args)) = parts.split_first() {
+            let mut cmd = std::process::Command::new(program);
+            cmd.args(args);
+            cmd.arg(url);
+            match cmd.spawn() {
+                Ok(_) => return,
+                Err(e) => {
+                    eprintln!(
+                        "Failed to launch custom browser '{}': {}. Falling back to system default.",
+                        custom, e
+                    );
+                }
+            }
+        }
+    }
+
+    // System default fallback: xdg-open on Linux, or gio open
+    let res = std::process::Command::new("xdg-open").arg(url).spawn();
+    if res.is_err() {
+        let _ = std::process::Command::new("gio")
+            .args(["open", url])
+            .spawn();
     }
 }
 
@@ -2648,6 +2745,9 @@ mod tests {
         controller.set_confirm_on_quit(false);
         assert!(!controller.confirm_on_quit);
 
+        controller.set_custom_browser("firefox --new-tab".into());
+        assert_eq!(controller.custom_browser.to_string(), "firefox --new-tab");
+
         // Verify that AppConfig::load() reflects these saved settings
         let loaded = AppConfig::load();
         assert_eq!(loaded.font_size, 18);
@@ -2659,6 +2759,7 @@ mod tests {
         assert_eq!(loaded.initial_lines_fetch, 250);
         assert!(!loaded.auto_reconnect);
         assert!(!loaded.confirm_on_quit);
+        assert_eq!(loaded.custom_browser, "firefox --new-tab");
 
         // Verify that instantiating a new RelayController::default() immediately loads these values
         let mut new_controller = RelayController::default();
@@ -2671,6 +2772,10 @@ mod tests {
         assert_eq!(new_controller.initial_lines_fetch, 250);
         assert!(!new_controller.auto_reconnect);
         assert!(!new_controller.confirm_on_quit);
+        assert_eq!(
+            new_controller.custom_browser.to_string(),
+            "firefox --new-tab"
+        );
 
         // Verify toggles flip values, save them, and init_controller preserves them
         new_controller.toggle_desktop_notifications();
@@ -2690,6 +2795,33 @@ mod tests {
         assert!(restarted_controller.desktop_notifications);
         assert!(!restarted_controller.show_join_part_quit);
         assert!(restarted_controller.confirm_on_quit);
+        assert_eq!(
+            restarted_controller.custom_browser.to_string(),
+            "firefox --new-tab"
+        );
+    }
+
+    #[test]
+    fn test_split_command_args_various_formats() {
+        assert_eq!(split_command_args(""), Vec::<String>::new());
+        assert_eq!(split_command_args("   "), Vec::<String>::new());
+        assert_eq!(split_command_args("firefox"), vec!["firefox"]);
+        assert_eq!(
+            split_command_args("firefox --new-tab"),
+            vec!["firefox", "--new-tab"]
+        );
+        assert_eq!(
+            split_command_args("flatpak run org.mozilla.firefox"),
+            vec!["flatpak", "run", "org.mozilla.firefox"]
+        );
+        assert_eq!(
+            split_command_args(r#""/opt/custom browser/bin" --flag="value with space""#),
+            vec!["/opt/custom browser/bin", "--flag=value with space"]
+        );
+        assert_eq!(
+            split_command_args(r#"'single quoted' regular"#),
+            vec!["single quoted", "regular"]
+        );
     }
 
     #[test]

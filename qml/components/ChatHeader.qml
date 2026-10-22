@@ -125,7 +125,7 @@ Rectangle {
                 font.pixelSize: 12
                 elide: Text.ElideRight
                 maximumLineCount: 1
-                onLinkActivated: function(link) { Qt.openUrlExternally(link) }
+                onLinkActivated: function(link) { relayController.open_url(link) }
 
                 TapHandler {
                     acceptedButtons: Qt.RightButton

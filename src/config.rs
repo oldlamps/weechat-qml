@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub initial_lines_fetch: i32,
     pub auto_reconnect: bool,
     pub confirm_on_quit: bool,
+    pub custom_browser: String,
     #[serde(default)]
     pub sidebar_server_order: Vec<String>,
     #[serde(default)]
@@ -43,6 +44,7 @@ impl Default for AppConfig {
             initial_lines_fetch: 150,
             auto_reconnect: true,
             confirm_on_quit: true,
+            custom_browser: String::new(),
             sidebar_server_order: Vec::new(),
             collapsed_servers: Vec::new(),
         }
@@ -51,12 +53,25 @@ impl Default for AppConfig {
 
 impl AppConfig {
     pub fn config_path() -> Option<PathBuf> {
-        dirs::config_dir().map(|mut p| {
-            p.push("weechat-qml");
+        #[cfg(test)]
+        {
+            let mut p = std::env::temp_dir();
+            let thread_name = format!("{:?}", std::thread::current().id());
+            let clean_thread = thread_name.replace(['(', ')', ' '], "");
+            p.push(format!("weechat-qml-test-{}", clean_thread));
             let _ = fs::create_dir_all(&p);
             p.push("config.json");
-            p
-        })
+            Some(p)
+        }
+        #[cfg(not(test))]
+        {
+            dirs::config_dir().map(|mut p| {
+                p.push("weechat-qml");
+                let _ = fs::create_dir_all(&p);
+                p.push("config.json");
+                p
+            })
+        }
     }
 
     pub fn sanitize(&mut self) {
@@ -82,6 +97,7 @@ impl AppConfig {
         if self.port == 0 {
             self.port = defaults.port;
         }
+        self.custom_browser = self.custom_browser.trim().to_string();
 
         let mut clean_order = Vec::new();
         for s in self.sidebar_server_order.drain(..) {
@@ -149,6 +165,7 @@ mod tests {
             initial_lines_fetch: -5,
             auto_reconnect: false,
             confirm_on_quit: false,
+            custom_browser: "  firefox --private  ".to_string(),
             sidebar_server_order: vec![
                 "Libera".to_string(),
                 " LIBERA ".to_string(),
@@ -172,6 +189,7 @@ mod tests {
         assert_eq!(cfg.font_size, defaults.font_size);
         assert_eq!(cfg.timestamp_format, defaults.timestamp_format);
         assert_eq!(cfg.initial_lines_fetch, defaults.initial_lines_fetch);
+        assert_eq!(cfg.custom_browser, "firefox --private");
         assert_eq!(cfg.sidebar_server_order, vec!["libera".to_string()]);
         assert_eq!(
             cfg.collapsed_servers,

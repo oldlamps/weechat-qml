@@ -11,6 +11,7 @@ Rectangle {
 
     property var relayController
     property var theme
+    property string savedCustomBrowser: ""
 
     MouseArea {
         anchors.fill: parent
@@ -20,7 +21,7 @@ Rectangle {
     Rectangle {
         id: card
         width: 620
-        height: Math.min(parent.height - 60, 680)
+        height: Math.min(parent.height - 60, 720)
         anchors.centerIn: parent
         radius: 14
         color: theme.bgElevated
@@ -544,6 +545,173 @@ Rectangle {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: relayController.toggle_confirm_on_quit()
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: theme.borderSubtle
+                    }
+
+                    // SECTION 4: WEB BROWSER
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+
+                        Text {
+                            text: "WEB BROWSER"
+                            color: theme.accentCyan
+                            font.pixelSize: 11
+                            font.bold: true
+                            font.letterSpacing: 0.8
+                        }
+
+                        // Use Custom Browser Toggle
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 42
+                            radius: 8
+                            color: customBrowserHover.hovered ? theme.bgHover : theme.bgSecondary
+                            border.color: theme.borderSubtle
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 14
+                                anchors.rightMargin: 14
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+
+                                    Text {
+                                        text: "Use custom web browser"
+                                        color: theme.textPrimary
+                                        font.pixelSize: 13
+                                    }
+
+                                    Text {
+                                        text: "When unchecked, links open in your Linux system default browser"
+                                        color: theme.textMuted
+                                        font.pixelSize: 11
+                                    }
+                                }
+
+                                Switch {
+                                    id: customBrowserSwitch
+                                    checked: (relayController.custom_browser || "").trim().length > 0
+                                    onToggled: {
+                                        if (checked) {
+                                            var toRestore = (settingsModal.savedCustomBrowser && settingsModal.savedCustomBrowser.trim().length > 0)
+                                                ? settingsModal.savedCustomBrowser.trim()
+                                                : "firefox"
+                                            relayController.set_custom_browser(toRestore)
+                                            browserCmdInput.text = toRestore
+                                        } else {
+                                            if (relayController.custom_browser.trim().length > 0) {
+                                                settingsModal.savedCustomBrowser = relayController.custom_browser.trim()
+                                            }
+                                            relayController.set_custom_browser("")
+                                            browserCmdInput.text = ""
+                                        }
+                                    }
+                                }
+                            }
+
+                            HoverHandler { id: customBrowserHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.rightMargin: 60
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: customBrowserSwitch.toggle()
+                            }
+                        }
+
+                        // Custom Command Input Box & Test Button
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            opacity: customBrowserSwitch.checked ? 1.0 : 0.45
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 38
+                                radius: 8
+                                color: theme.bgInput
+                                border.color: (browserCmdInput.activeFocus && customBrowserSwitch.checked) ? theme.borderFocus : theme.borderSubtle
+                                border.width: 1
+
+                                TextInput {
+                                    id: browserCmdInput
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    color: customBrowserSwitch.checked ? theme.textPrimary : theme.textMuted
+                                    font.pixelSize: 13
+                                    font.family: theme.fontMono
+                                    text: relayController.custom_browser
+                                    selectByMouse: true
+                                    enabled: customBrowserSwitch.checked
+                                    onTextEdited: {
+                                        settingsModal.savedCustomBrowser = text
+                                        relayController.set_custom_browser(text)
+                                    }
+                                }
+
+                                Connections {
+                                    target: relayController
+                                    function onPreferences_changed() {
+                                        if (!browserCmdInput.activeFocus) {
+                                            browserCmdInput.text = relayController.custom_browser
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: customBrowserSwitch.checked
+                                        ? "Enter browser binary (e.g. firefox, /usr/bin/brave, flatpak run ...)"
+                                        : "Using Linux system default browser"
+                                    color: theme.textMuted
+                                    font.pixelSize: 12
+                                    visible: browserCmdInput.text.length === 0 && !browserCmdInput.activeFocus
+                                }
+                            }
+
+                            // Test Button
+                            Rectangle {
+                                height: 38
+                                implicitWidth: testBtnText.implicitWidth + 24
+                                radius: 8
+                                color: testHover.hovered ? theme.bgHover : theme.bgSecondary
+                                border.color: theme.borderSubtle
+                                border.width: 1
+
+                                RowLayout {
+                                    anchors.centerIn: parent
+                                    spacing: 4
+
+                                    Text {
+                                        id: testBtnText
+                                        text: "Test ↗"
+                                        color: theme.textPrimary
+                                        font.pixelSize: 12
+                                        font.bold: true
+                                    }
+                                }
+
+                                HoverHandler { id: testHover }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        relayController.open_url("https://weechat.org")
+                                    }
+                                }
                             }
                         }
                     }

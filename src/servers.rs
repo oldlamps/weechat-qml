@@ -74,12 +74,25 @@ pub struct ServerStore {
 
 impl ServerStore {
     pub fn store_path() -> Option<PathBuf> {
-        dirs::config_dir().map(|mut p| {
-            p.push("weechat-qml");
+        #[cfg(test)]
+        {
+            let mut p = std::env::temp_dir();
+            let thread_name = format!("{:?}", std::thread::current().id());
+            let clean_thread = thread_name.replace(['(', ')', ' '], "");
+            p.push(format!("weechat-qml-test-{}", clean_thread));
             let _ = fs::create_dir_all(&p);
             p.push("servers.json");
-            p
-        })
+            Some(p)
+        }
+        #[cfg(not(test))]
+        {
+            dirs::config_dir().map(|mut p| {
+                p.push("weechat-qml");
+                let _ = fs::create_dir_all(&p);
+                p.push("servers.json");
+                p
+            })
+        }
     }
 
     pub fn load() -> Self {

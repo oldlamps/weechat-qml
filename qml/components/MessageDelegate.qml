@@ -299,7 +299,7 @@ Item {
                         font.family: theme.fontSans
 
                         onLinkActivated: function(link) {
-                            Qt.openUrlExternally(link)
+                            relayController.open_url(link)
                         }
 
                         HoverHandler {
@@ -416,7 +416,7 @@ Item {
                                             MouseArea {
                                                 anchors.fill: parent
                                                 cursorShape: Qt.PointingHandCursor
-                                                onClicked: Qt.openUrlExternally(model.media_url.length > 0 ? model.media_url : model.image_url)
+                                                onClicked: relayController.open_url(model.media_url.length > 0 ? model.media_url : model.image_url)
                                             }
                                         }
                                     }
@@ -437,7 +437,7 @@ Item {
                                     MouseArea {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: Qt.openUrlExternally(msgRoot.resolvedImageUrl.length > 0 ? msgRoot.resolvedImageUrl : (model.media_url.length > 0 ? model.media_url : model.image_url))
+                                        onClicked: relayController.open_url(msgRoot.resolvedImageUrl.length > 0 ? msgRoot.resolvedImageUrl : (model.media_url.length > 0 ? model.media_url : model.image_url))
                                     }
                                 }
                             }
@@ -869,7 +869,7 @@ Item {
                                         MouseArea {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
-                                            onClicked: Qt.openUrlExternally(model.media_url)
+                                            onClicked: relayController.open_url(model.media_url)
                                         }
                                     }
                                 }

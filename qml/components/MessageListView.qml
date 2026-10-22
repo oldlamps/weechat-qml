@@ -114,9 +114,21 @@ Item {
 
             if (atYEnd || isNearBottom) {
                 autoScroll = true
-            } else if (deltaY < -1 || moving || flicking || dragging) {
-                if (distanceFromBottom > 80) {
+            } else if (moving || flicking || dragging) {
+                if (deltaY < -1 && distanceFromBottom > 80) {
                     autoScroll = false
+                }
+            }
+        }
+
+        WheelHandler {
+            target: listView
+            onWheel: function(event) {
+                if (event.angleDelta.y > 0) {
+                    // Scrolling UP into backlog
+                    listView.autoScroll = false
+                } else if (event.angleDelta.y < 0 && listView.isNearBottom) {
+                    listView.autoScroll = true
                 }
             }
         }
@@ -126,6 +138,7 @@ Item {
         // If the user scrolled up to read past messages, LEAVE THEM EXACTLY WHERE THEY ARE.
         onCountChanged: {
             if (autoScroll) {
+                feedRoot.scrollToBottom()
                 Qt.callLater(function() {
                     if (listView.autoScroll) {
                         feedRoot.scrollToBottom()
@@ -408,7 +421,7 @@ Item {
             }
             onTriggered: {
                 if (messageContextMenu.targetLink.length > 0) {
-                    Qt.openUrlExternally(messageContextMenu.targetLink)
+                    relayController.open_url(messageContextMenu.targetLink)
                 }
             }
         }
@@ -518,9 +531,29 @@ Item {
         // When user switches to a buffer, re-enable autoScroll and firmly jump to the bottom
         function onActive_buffer_changed() {
             listView.autoScroll = true
+            feedRoot.scrollToBottom()
             Qt.callLater(function() {
-                feedRoot.scrollToBottom()
+                if (listView.autoScroll) {
+                    feedRoot.scrollToBottom()
+                }
             })
+        }
+        // When lines are fetched or new messages arrive, ensure we stay scrolled to the bottom
+        function onNew_message_arrived() {
+            if (listView.autoScroll) {
+                feedRoot.scrollToBottom()
+                Qt.callLater(function() {
+                    if (listView.autoScroll) {
+                        feedRoot.scrollToBottom()
+                    }
+                })
+            }
+        }
+    }
+
+    Component.onCompleted: {
+        if (listView.count > 0) {
+            feedRoot.scrollToBottom()
         }
     }
 }
