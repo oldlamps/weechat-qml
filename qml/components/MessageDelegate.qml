@@ -21,6 +21,51 @@ Item {
     property string resolvedImageUrl: ""
     signal nickClicked(string nick)
     signal contextMenuRequested(var targetEdit, string selectedText, string plainText, string senderNick, string timeStr, string linkUrl, bool isAction)
+    signal expandMediaRequested(string mediaType, string mediaUrl, string streamUrl, string audioUrl, string title, real position, bool isPlaying)
+
+    function requestExpandImage() {
+        var finalImg = msgRoot.resolvedImageUrl.length > 0
+            ? msgRoot.resolvedImageUrl
+            : (model.media_url.indexOf("/wiki/File:") !== -1 ? "" : (model.media_url.length > 0 ? model.media_url : model.image_url))
+        if (finalImg.length > 0) {
+            msgRoot.expandMediaRequested(
+                "image",
+                finalImg,
+                "",
+                "",
+                finalImg,
+                0,
+                false
+            )
+        }
+    }
+
+    function requestExpandVideo() {
+        if (msgRoot.inlineStreamUrl.length > 0) {
+            var wasPlaying = inlinePlayer.playbackState === MediaPlayer.PlayingState
+            inlinePlayer.pause()
+            if (msgRoot.inlineAudioUrl.length > 0) inlineAudioPlayer.pause()
+            msgRoot.expandMediaRequested(
+                "youtube",
+                model.media_url,
+                msgRoot.inlineStreamUrl,
+                msgRoot.inlineAudioUrl,
+                msgRoot.ytTitle.length > 0 ? msgRoot.ytTitle : model.media_url,
+                inlinePlayer.position,
+                wasPlaying
+            )
+        } else {
+            msgRoot.expandMediaRequested(
+                "youtube",
+                model.media_url,
+                "",
+                "",
+                msgRoot.ytTitle.length > 0 ? msgRoot.ytTitle : model.media_url,
+                0,
+                true
+            )
+        }
+    }
 
     Connections {
         target: relayController
@@ -358,10 +403,47 @@ Item {
                                         elide: Text.ElideMiddle
                                     }
 
-                                    Text {
-                                        text: "Hide"
-                                        color: theme.textMuted
-                                        font.pixelSize: 11
+                                    // Expand Button Pill
+                                    Rectangle {
+                                        height: 22
+                                        implicitWidth: expImgTxt.implicitWidth + 16
+                                        radius: 4
+                                        color: expImgHover.hovered ? theme.bgHover : theme.bgElevated
+                                        border.color: theme.borderSubtle
+
+                                        Text {
+                                            id: expImgTxt
+                                            anchors.centerIn: parent
+                                            text: "⛶ Expand"
+                                            color: expImgHover.hovered ? theme.textPrimary : theme.textSecondary
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                        }
+
+                                        HoverHandler { id: expImgHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: msgRoot.requestExpandImage()
+                                        }
+                                    }
+
+                                    // Hide Button Pill
+                                    Rectangle {
+                                        height: 22
+                                        implicitWidth: hideImgTxt.implicitWidth + 14
+                                        radius: 4
+                                        color: hideImgHover.hovered ? theme.bgHover : "transparent"
+
+                                        Text {
+                                            id: hideImgTxt
+                                            anchors.centerIn: parent
+                                            text: "Hide"
+                                            color: theme.textMuted
+                                            font.pixelSize: 10
+                                        }
+
+                                        HoverHandler { id: hideImgHover }
                                         MouseArea {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
@@ -437,7 +519,7 @@ Item {
                                     MouseArea {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: relayController.open_url(msgRoot.resolvedImageUrl.length > 0 ? msgRoot.resolvedImageUrl : (model.media_url.length > 0 ? model.media_url : model.image_url))
+                                        onClicked: msgRoot.requestExpandImage()
                                     }
                                 }
                             }
@@ -449,7 +531,7 @@ Item {
                         visible: relayController.show_media_previews && model.media_type === "youtube" && !msgRoot.previewCollapsed
                         Layout.topMargin: 6
                         Layout.preferredWidth: Math.min(440, msgRoot.width > 120 ? msgRoot.width - 100 : 440)
-                        Layout.preferredHeight: msgRoot.isInlinePlaying ? 300 : 255
+                        Layout.preferredHeight: msgRoot.isInlinePlaying ? 300 : 265
                         implicitWidth: Layout.preferredWidth
                         implicitHeight: Layout.preferredHeight
                         radius: 8
@@ -464,8 +546,8 @@ Item {
                             // Top Header Strip
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 30
-                                height: 30
+                                Layout.preferredHeight: 34
+                                height: 34
                                 color: theme.bgSecondary
 
                                 RowLayout {
@@ -507,10 +589,47 @@ Item {
                                         elide: Text.ElideRight
                                     }
 
-                                    Text {
-                                        text: "Hide"
-                                        color: theme.textMuted
-                                        font.pixelSize: 11
+                                    // Expand Button Pill
+                                    Rectangle {
+                                        height: 22
+                                        implicitWidth: expYtTxt.implicitWidth + 16
+                                        radius: 4
+                                        color: expYtHover.hovered ? theme.bgHover : theme.bgElevated
+                                        border.color: theme.borderSubtle
+
+                                        Text {
+                                            id: expYtTxt
+                                            anchors.centerIn: parent
+                                            text: "⛶ Expand"
+                                            color: expYtHover.hovered ? theme.textPrimary : theme.textSecondary
+                                            font.pixelSize: 10
+                                            font.bold: true
+                                        }
+
+                                        HoverHandler { id: expYtHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: msgRoot.requestExpandVideo()
+                                        }
+                                    }
+
+                                    // Hide Button Pill
+                                    Rectangle {
+                                        height: 22
+                                        implicitWidth: hideYtTxt.implicitWidth + 14
+                                        radius: 4
+                                        color: hideYtHover.hovered ? theme.bgHover : "transparent"
+
+                                        Text {
+                                            id: hideYtTxt
+                                            anchors.centerIn: parent
+                                            text: "Hide"
+                                            color: theme.textMuted
+                                            font.pixelSize: 10
+                                        }
+
+                                        HoverHandler { id: hideYtHover }
                                         MouseArea {
                                             anchors.fill: parent
                                             cursorShape: Qt.PointingHandCursor
@@ -728,10 +847,43 @@ Item {
                                                 font.family: theme.fontMono
                                             }
 
-                                            Text {
-                                                text: "✕"
-                                                color: "#ffffff"
-                                                font.pixelSize: 12
+                                            // Expand / Fullscreen button
+                                            Rectangle {
+                                                width: 26
+                                                height: 26
+                                                radius: 4
+                                                color: expInlHover.hovered ? "#44ffffff" : "transparent"
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "⛶"
+                                                    color: "#ffffff"
+                                                    font.pixelSize: 13
+                                                }
+
+                                                HoverHandler { id: expInlHover }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: msgRoot.requestExpandVideo()
+                                                }
+                                            }
+
+                                            // Close inline player button
+                                            Rectangle {
+                                                width: 26
+                                                height: 26
+                                                radius: 4
+                                                color: closeInlHover.hovered ? "#44ffffff" : "transparent"
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "✕"
+                                                    color: "#ffffff"
+                                                    font.pixelSize: 12
+                                                }
+
+                                                HoverHandler { id: closeInlHover }
                                                 MouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
@@ -754,22 +906,22 @@ Item {
                             // Bottom Action Strip (Buttons for Play, MPV, Browser)
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 34
-                                height: 34
+                                Layout.preferredHeight: 40
+                                height: 40
                                 color: theme.bgSecondary
                                 visible: !msgRoot.isInlinePlaying
 
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.leftMargin: 10
-                                    anchors.rightMargin: 10
-                                    spacing: 8
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    spacing: 10
 
                                     // Play Inline button
                                     Rectangle {
-                                        height: 24
-                                        implicitWidth: playInlineTxt.implicitWidth + 16
-                                        radius: 4
+                                        height: 28
+                                        implicitWidth: playInlineTxt.implicitWidth + 24
+                                        radius: 6
                                         color: playInlHover.hovered ? theme.bgHover : theme.bgElevated
                                         border.color: theme.borderSubtle
 
@@ -778,7 +930,7 @@ Item {
                                             anchors.centerIn: parent
                                             text: msgRoot.isResolvingStream ? "⏳ Resolving..." : "▶ Play Inline"
                                             color: theme.accentCyan
-                                            font.pixelSize: 10
+                                            font.pixelSize: 11
                                             font.bold: true
                                         }
 
@@ -798,9 +950,9 @@ Item {
 
                                     // MPV button
                                     Rectangle {
-                                        height: 24
-                                        implicitWidth: mpvTxt.implicitWidth + 16
-                                        radius: 4
+                                        height: 28
+                                        implicitWidth: mpvTxt.implicitWidth + 22
+                                        radius: 6
                                         color: mpvHover.hovered ? theme.bgHover : theme.bgElevated
                                         border.color: theme.borderSubtle
 
@@ -809,7 +961,7 @@ Item {
                                             anchors.centerIn: parent
                                             text: "▶ MPV"
                                             color: theme.accentPrimary
-                                            font.pixelSize: 10
+                                            font.pixelSize: 11
                                             font.bold: true
                                         }
 
@@ -821,6 +973,31 @@ Item {
                                         }
                                     }
 
+                                    // Expand / Fullscreen button
+                                    Rectangle {
+                                        height: 28
+                                        implicitWidth: expBtnTxt.implicitWidth + 24
+                                        radius: 6
+                                        color: expBtnHover.hovered ? theme.bgHover : theme.bgElevated
+                                        border.color: theme.borderSubtle
+
+                                        Text {
+                                            id: expBtnTxt
+                                            anchors.centerIn: parent
+                                            text: "⛶ Expand"
+                                            color: theme.accentCyan
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                        }
+
+                                        HoverHandler { id: expBtnHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: msgRoot.requestExpandVideo()
+                                        }
+                                    }
+
                                     // Status / Error message or spacer
                                     Text {
                                         id: errText
@@ -828,7 +1005,7 @@ Item {
                                         visible: msgRoot.resolveError.length > 0
                                         text: msgRoot.resolveError
                                         color: theme.badgeHighlight
-                                        font.pixelSize: 10
+                                        font.pixelSize: 11
                                         elide: Text.ElideRight
 
                                         HoverHandler { id: errHover }
@@ -851,9 +1028,9 @@ Item {
 
                                     // Open in Browser button
                                     Rectangle {
-                                        height: 24
-                                        implicitWidth: openTxt.implicitWidth + 14
-                                        radius: 4
+                                        height: 28
+                                        implicitWidth: openTxt.implicitWidth + 22
+                                        radius: 6
                                         color: openHover.hovered ? theme.bgHover : theme.bgElevated
                                         border.color: theme.borderSubtle
 
@@ -862,7 +1039,8 @@ Item {
                                             anchors.centerIn: parent
                                             text: "Open ↗"
                                             color: theme.textSecondary
-                                            font.pixelSize: 10
+                                            font.pixelSize: 11
+                                            font.bold: true
                                         }
 
                                         HoverHandler { id: openHover }

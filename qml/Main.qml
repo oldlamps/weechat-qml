@@ -266,6 +266,9 @@ ApplicationWindow {
                 onMentionNickRequested: function(nick) {
                     chatInputBar.insertMention(nick)
                 }
+                onExpandMediaRequested: function(mediaType, mediaUrl, streamUrl, audioUrl, title, position, isPlaying) {
+                    mediaViewerModal.openMedia(mediaType, mediaUrl, streamUrl, audioUrl, title, position, isPlaying)
+                }
             }
 
             ChatInputBar {
@@ -319,6 +322,13 @@ ApplicationWindow {
     // Persistent Server Manager Modal
     ServerManagerDialog {
         id: serverManagerDialog
+        relayController: relay
+        theme: appTheme
+    }
+
+    // Fullscreen / Expanded Media Viewer Modal (Images & Video)
+    MediaViewerModal {
+        id: mediaViewerModal
         relayController: relay
         theme: appTheme
     }

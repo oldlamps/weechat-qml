@@ -8,6 +8,7 @@ Item {
     property var relayController
     property var theme
     signal mentionNickRequested(string nick)
+    signal expandMediaRequested(string mediaType, string mediaUrl, string streamUrl, string audioUrl, string title, real position, bool isPlaying)
 
     // Method to page scroll up from input field or hotkeys
     function scrollPageUp() {
@@ -184,6 +185,9 @@ Item {
             theme: feedRoot.theme
             onNickClicked: function(nick) {
                 feedRoot.mentionNickRequested(nick)
+            }
+            onExpandMediaRequested: function(mediaType, mediaUrl, streamUrl, audioUrl, title, position, isPlaying) {
+                feedRoot.expandMediaRequested(mediaType, mediaUrl, streamUrl, audioUrl, title, position, isPlaying)
             }
             onContextMenuRequested: function(targetEdit, selSnippet, plainText, senderNick, timeStr, linkUrl, isAction) {
                 messageContextMenu.targetEdit = targetEdit

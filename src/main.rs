@@ -45,6 +45,7 @@ qrc!(app_resources,
         "qml/components/SettingsDialog.qml" as "components/SettingsDialog.qml",
         "qml/components/ServerManagerDialog.qml" as "components/ServerManagerDialog.qml",
         "qml/components/QuitConfirmDialog.qml" as "components/QuitConfirmDialog.qml",
+        "qml/components/MediaViewerModal.qml" as "components/MediaViewerModal.qml",
     },
     "icons" {
         "assets/weechat.png" as "weechat.png",
