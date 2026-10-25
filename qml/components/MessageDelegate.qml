@@ -143,9 +143,11 @@ Item {
         Item {
             visible: model.date_header.length > 0
             Layout.fillWidth: true
-            height: visible ? 36 : 0
+            height: visible ? (relayController.classic_mode ? 20 : 36) : 0
 
+            // Modern divider
             Rectangle {
+                visible: !relayController.classic_mode
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.leftMargin: 20
@@ -156,6 +158,7 @@ Item {
             }
 
             Rectangle {
+                visible: !relayController.classic_mode
                 anchors.centerIn: parent
                 implicitWidth: dateLbl.implicitWidth + 20
                 height: 22
@@ -172,16 +175,47 @@ Item {
                     font.bold: true
                 }
             }
+
+            // Compact Classic IRC divider
+            RowLayout {
+                visible: relayController.classic_mode
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 1
+                    color: theme.borderSubtle
+                }
+
+                Text {
+                    text: "─── " + model.date_header + " ───"
+                    color: theme.textMuted
+                    font.pixelSize: 10
+                    font.family: theme.fontMono
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 1
+                    color: theme.borderSubtle
+                }
+            }
         }
 
-        // Message Row Container
+        // Modern Message Row Container
         Rectangle {
+            id: modernRow
+            visible: !relayController.classic_mode
             Layout.fillWidth: true
-            implicitHeight: rowContent.implicitHeight + (model.is_grouped ? 6 : 14)
+            implicitHeight: visible ? (rowContent.implicitHeight + (model.is_grouped ? 6 : 14)) : 0
             color: {
-                if (model.matches_search) return "#362e14"
+                if (model.matches_search) return theme.isDark ? "#362e14" : "#fef3c7"
                 if (model.is_highlight) return theme.bgHighlightRow
-                if (rowHover.hovered) return "#12151f"
+                if (rowHover.hovered) return theme.bgHover
+                if (relayController.alternating_row_colors && (index % 2 === 1)) return theme.bgRowAlt
                 return "transparent"
             }
 
@@ -217,14 +251,14 @@ Item {
                         width: 34
                         height: 34
                         radius: 9
-                        color: Qt.rgba(0.14, 0.17, 0.24, 1.0)
-                        border.color: model.nick_color
+                        color: theme.isDark ? Qt.rgba(0.14, 0.17, 0.24, 1.0) : Qt.rgba(0.92, 0.94, 0.97, 1.0)
+                        border.color: theme.adaptNickColor(model.nick_color)
                         border.width: 1
 
                         Text {
                             anchors.centerIn: parent
                             text: model.prefix_plain.length > 0 ? model.prefix_plain.substring(0, 2).toUpperCase() : "•"
-                            color: model.nick_color
+                            color: theme.adaptNickColor(model.nick_color)
                             font.pixelSize: 12
                             font.bold: true
                         }
@@ -264,12 +298,12 @@ Item {
                             width: 16
                             height: 16
                             radius: 4
-                            color: model.role_badge === "@" ? "#2b2347" : "#1c312c"
+                            color: model.role_badge === "@" ? (theme.isDark ? "#2b2347" : "#ede9fe") : (theme.isDark ? "#1c312c" : "#dcfce7")
 
                             Text {
                                 anchors.centerIn: parent
                                 text: model.role_badge
-                                color: model.role_badge === "@" ? "#c084fc" : "#4ade80"
+                                color: model.role_badge === "@" ? (theme.isDark ? "#c084fc" : "#7c3aed") : (theme.isDark ? "#4ade80" : "#16a34a")
                                 font.pixelSize: 10
                                 font.bold: true
                                 font.family: theme.fontMono
@@ -279,7 +313,7 @@ Item {
                         // Sender Nickname
                         Text {
                             text: model.prefix_plain
-                            color: model.nick_color
+                            color: theme.adaptNickColor(model.nick_color)
                             font.pixelSize: 13
                             font.bold: true
 
@@ -1121,6 +1155,225 @@ Item {
                         model.prefix_plain,
                         model.time_str,
                         messageBody.hoveredLink,
+                        model.is_action
+                    )
+                }
+            }
+        }
+
+        // Compact Classic IRC Message Row Container
+        Rectangle {
+            id: classicRow
+            visible: relayController.classic_mode
+            Layout.fillWidth: true
+            implicitHeight: visible ? (classicLayout.implicitHeight + 4) : 0
+            color: {
+                if (model.matches_search) return theme.isDark ? "#362e14" : "#fef3c7"
+                if (model.is_highlight) return theme.bgHighlightRow
+                if (classicRowHover.hovered) return theme.bgHover
+                if (relayController.alternating_row_colors && (index % 2 === 1)) return theme.bgRowAlt
+                return "transparent"
+            }
+
+            // Left accent bar for highlights or search matches
+            Rectangle {
+                visible: model.is_highlight || model.matches_search
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 3
+                color: model.matches_search ? theme.statusWarning : theme.badgeHighlight
+            }
+
+            RowLayout {
+                id: classicLayout
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                anchors.topMargin: 1
+                anchors.bottomMargin: 1
+                spacing: 6
+
+                // 1. Timestamp Column
+                Text {
+                    id: classicTimestamp
+                    Layout.alignment: Qt.AlignTop
+                    Layout.topMargin: 1
+                    text: model.time_str
+                    color: theme.textMuted
+                    font.pixelSize: Math.max(10, (relayController.font_size > 0 ? relayController.font_size : theme.baseFontSize) - 1)
+                    font.family: theme.fontMono
+                }
+
+                // 2. Right-Aligned Nick / Prefix Column
+                Item {
+                    id: classicPrefixContainer
+                    Layout.preferredWidth: Math.max(90, Math.min(150, classicPrefixText.implicitWidth))
+                    Layout.minimumWidth: 85
+                    Layout.maximumWidth: 150
+                    Layout.preferredHeight: classicPrefixText.implicitHeight
+                    Layout.alignment: Qt.AlignTop
+                    Layout.topMargin: 1
+
+                    Text {
+                        id: classicPrefixText
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        horizontalAlignment: Text.AlignRight
+                        elide: Text.ElideLeft
+                        width: parent.width
+                        text: {
+                            if (model.is_action) return "*"
+                            if (model.is_system) {
+                                if (model.prefix_plain.length > 0) return model.prefix_plain
+                                return "--"
+                            }
+                            var p = model.prefix_plain
+                            if (model.role_badge.length > 0) {
+                                p = model.role_badge + p
+                            }
+                            return p
+                        }
+                        color: {
+                            if (model.is_action) return theme.accentCyan
+                            if (model.is_system) {
+                                if (model.prefix_plain === "-->") return theme.statusOnline
+                                if (model.prefix_plain === "<--") return theme.statusError
+                                return theme.textMuted
+                            }
+                            return theme.adaptNickColor(model.nick_color)
+                        }
+                        font.pixelSize: relayController.font_size > 0 ? relayController.font_size : theme.baseFontSize
+                        font.family: theme.fontMono
+                        font.bold: !model.is_system
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: (!model.is_system && !model.is_action) ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: {
+                            if (!model.is_system && !model.is_action && model.prefix_plain.length > 0) {
+                                msgRoot.nickClicked(model.prefix_plain)
+                            }
+                        }
+                    }
+                }
+
+                // 3. WeeChat-style Vertical Separator
+                Text {
+                    Layout.alignment: Qt.AlignTop
+                    Layout.topMargin: 1
+                    text: "│"
+                    color: theme.borderSubtle
+                    font.pixelSize: relayController.font_size > 0 ? relayController.font_size : theme.baseFontSize
+                    font.family: theme.fontMono
+                }
+
+                // 4. Message Body & Optional Compact Media Pill
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 3
+
+                    TextEdit {
+                        id: classicMessageBody
+                        Layout.fillWidth: true
+                        readOnly: true
+                        selectByMouse: true
+                        cursorVisible: false
+                        activeFocusOnPress: true
+                        text: {
+                            if (model.is_action) {
+                                var actPrefix = model.prefix_plain.length > 0 ? (model.prefix_plain + " ") : ""
+                                var bodyText = model.styled_text
+                                if (bodyText.indexOf(model.prefix_plain) === 0) {
+                                    return "<i>" + bodyText + "</i>"
+                                }
+                                return "<i>" + actPrefix + bodyText + "</i>"
+                            }
+                            return model.styled_text
+                        }
+                        textFormat: TextEdit.RichText
+                        wrapMode: TextEdit.Wrap
+                        color: {
+                            if (model.is_system) return theme.textMuted
+                            if (model.is_action) return theme.accentCyan
+                            return theme.textPrimary
+                        }
+                        selectionColor: Qt.alpha(theme.accentPrimary, 0.35)
+                        selectedTextColor: theme.textPrimary
+                        font.pixelSize: model.is_system ? Math.max(10, (relayController.font_size > 0 ? relayController.font_size : theme.baseFontSize) - 1) : (relayController.font_size > 0 ? relayController.font_size : theme.baseFontSize)
+                        font.family: theme.fontMono
+
+                        onLinkActivated: function(link) {
+                            relayController.open_url(link)
+                        }
+
+                        HoverHandler {
+                            cursorShape: classicMessageBody.hoveredLink.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+                        }
+                    }
+
+                    // Optional Compact Media Pill (Image or YouTube)
+                    Rectangle {
+                        visible: relayController.show_media_previews && (model.media_type === "image" || model.media_type === "youtube")
+                        Layout.preferredHeight: 18
+                        Layout.preferredWidth: classicMediaPillContent.implicitWidth + 12
+                        radius: 3
+                        color: classicMediaHover.hovered ? theme.bgHover : theme.bgElevated
+                        border.color: theme.borderSubtle
+
+                        RowLayout {
+                            id: classicMediaPillContent
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            Text {
+                                text: model.media_type === "youtube" ? "▶ YouTube" : "🖼 Image"
+                                color: theme.accentCyan
+                                font.pixelSize: 10
+                                font.bold: true
+                                font.family: theme.fontMono
+                            }
+
+                            Text {
+                                text: "⛶ Expand"
+                                color: theme.textSecondary
+                                font.pixelSize: 9
+                                font.family: theme.fontMono
+                            }
+                        }
+
+                        HoverHandler { id: classicMediaHover }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (model.media_type === "youtube") {
+                                    msgRoot.requestExpandVideo()
+                                } else {
+                                    msgRoot.requestExpandImage()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HoverHandler { id: classicRowHover }
+
+            TapHandler {
+                acceptedButtons: Qt.RightButton
+                onTapped: function(event) {
+                    msgRoot.contextMenuRequested(
+                        classicMessageBody,
+                        classicMessageBody.selectedText,
+                        model.plain_text,
+                        model.prefix_plain,
+                        model.time_str,
+                        classicMessageBody.hoveredLink,
                         model.is_action
                     )
                 }

@@ -61,8 +61,8 @@ Item {
         clip: true
         model: relayController.message_model
         spacing: 0
-        topMargin: 12
-        bottomMargin: 14
+        topMargin: relayController.classic_mode ? 4 : 12
+        bottomMargin: relayController.classic_mode ? 4 : 14
         boundsBehavior: Flickable.StopAtBounds
 
         // Track whether user wants to follow live streaming messages
@@ -140,11 +140,6 @@ Item {
         onCountChanged: {
             if (autoScroll) {
                 feedRoot.scrollToBottom()
-                Qt.callLater(function() {
-                    if (listView.autoScroll) {
-                        feedRoot.scrollToBottom()
-                    }
-                })
             }
         }
 
@@ -536,21 +531,11 @@ Item {
         function onActive_buffer_changed() {
             listView.autoScroll = true
             feedRoot.scrollToBottom()
-            Qt.callLater(function() {
-                if (listView.autoScroll) {
-                    feedRoot.scrollToBottom()
-                }
-            })
         }
         // When lines are fetched or new messages arrive, ensure we stay scrolled to the bottom
         function onNew_message_arrived() {
             if (listView.autoScroll) {
                 feedRoot.scrollToBottom()
-                Qt.callLater(function() {
-                    if (listView.autoScroll) {
-                        feedRoot.scrollToBottom()
-                    }
-                })
             }
         }
     }

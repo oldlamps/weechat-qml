@@ -22,6 +22,8 @@ pub struct AppConfig {
     pub confirm_on_quit: bool,
     pub close_to_tray: bool,
     pub custom_browser: String,
+    pub classic_mode: bool,
+    pub alternating_row_colors: bool,
     #[serde(default)]
     pub sidebar_server_order: Vec<String>,
     #[serde(default)]
@@ -47,6 +49,8 @@ impl Default for AppConfig {
             confirm_on_quit: true,
             close_to_tray: true,
             custom_browser: String::new(),
+            classic_mode: false,
+            alternating_row_colors: true,
             sidebar_server_order: Vec::new(),
             collapsed_servers: Vec::new(),
         }
@@ -169,6 +173,8 @@ mod tests {
             confirm_on_quit: false,
             close_to_tray: false,
             custom_browser: "  firefox --private  ".to_string(),
+            classic_mode: false,
+            alternating_row_colors: true,
             sidebar_server_order: vec![
                 "Libera".to_string(),
                 " LIBERA ".to_string(),
@@ -207,5 +213,6 @@ mod tests {
         assert!(!cfg.auto_reconnect);
         assert!(!cfg.confirm_on_quit);
         assert!(!cfg.close_to_tray);
+        assert!(!cfg.classic_mode);
     }
 }

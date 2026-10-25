@@ -287,7 +287,7 @@ Rectangle {
                                         height: 16
                                         implicitWidth: keyLbl.implicitWidth + 8
                                         radius: 4
-                                        color: "#1c2e28"
+                                        color: theme.isDark ? "#1c2e28" : "#dcfce7"
                                         Text {
                                             id: keyLbl
                                             anchors.centerIn: parent
@@ -369,7 +369,7 @@ Rectangle {
                                     width: 30
                                     height: 30
                                     radius: 6
-                                    color: delHover.hovered ? "#3a151b" : theme.bgElevated
+                                    color: delHover.hovered ? (theme.isDark ? "#3a151b" : "#fee2e2") : theme.bgElevated
                                     border.color: theme.borderSubtle
 
                                     Text {

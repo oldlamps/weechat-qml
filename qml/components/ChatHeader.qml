@@ -281,6 +281,31 @@ Rectangle {
                 }
             }
 
+            // View Mode Toggle Button (Modern vs Compact Classic IRC)
+            Rectangle {
+                width: 30
+                height: 30
+                radius: 6
+                color: relayController.classic_mode ? theme.bgActive : (viewModeHover.hovered ? theme.bgHover : "transparent")
+
+                Text {
+                    anchors.centerIn: parent
+                    text: relayController.classic_mode ? "📟" : "💬"
+                    font.pixelSize: 13
+                }
+
+                HoverHandler { id: viewModeHover }
+                ToolTip.visible: viewModeHover.hovered
+                ToolTip.delay: 500
+                ToolTip.text: relayController.classic_mode ? "Compact Classic IRC View (click for Modern)" : "Modern View (click for Compact Classic IRC)"
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: relayController.toggle_classic_mode()
+                }
+            }
+
             // Nicklist Sidebar Toggle Button
             Rectangle {
                 visible: relayController.active_buffer_type === "channel"

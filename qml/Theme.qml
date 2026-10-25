@@ -8,7 +8,7 @@ QtObject {
     property string activeThemeName: "Catppuccin Mocha"
 
     // Supported theme list for the settings selector
-    readonly property var availableThemes: [
+    readonly property var darkThemes: [
         "Catppuccin Mocha",
         "Tokyo Night",
         "Nord",
@@ -18,6 +18,33 @@ QtObject {
         "Cyberpunk / Neon",
         "Monokai Pro",
         "GitHub Dark"
+    ]
+
+    readonly property var lightThemes: [
+        "Catppuccin Latte",
+        "GitHub Light",
+        "Solarized Light",
+        "Tokyo Night Day",
+        "Nord Light",
+        "Gruvbox Light"
+    ]
+
+    readonly property var availableThemes: [
+        "Catppuccin Mocha",
+        "Tokyo Night",
+        "Nord",
+        "Dracula",
+        "Gruvbox Dark",
+        "Solarized Dark",
+        "Cyberpunk / Neon",
+        "Monokai Pro",
+        "GitHub Dark",
+        "Catppuccin Latte",
+        "GitHub Light",
+        "Solarized Light",
+        "Tokyo Night Day",
+        "Nord Light",
+        "Gruvbox Light"
     ]
 
     // Reactive Theme Palette Switcher
@@ -44,7 +71,8 @@ QtObject {
                     badgeUnread: "#414868",
                     statusOnline: "#9ece6a",
                     statusWarning: "#e0af68",
-                    statusError: "#f7768e"
+                    statusError: "#f7768e",
+                    isDark: true
                 }
 
             case "Nord":
@@ -68,7 +96,8 @@ QtObject {
                     badgeUnread: "#4c566a",
                     statusOnline: "#a3be8c",
                     statusWarning: "#ebcb8b",
-                    statusError: "#bf616a"
+                    statusError: "#bf616a",
+                    isDark: true
                 }
 
             case "Dracula":
@@ -92,7 +121,8 @@ QtObject {
                     badgeUnread: "#44475a",
                     statusOnline: "#50fa7b",
                     statusWarning: "#f1fa8c",
-                    statusError: "#ff5555"
+                    statusError: "#ff5555",
+                    isDark: true
                 }
 
             case "Gruvbox Dark":
@@ -116,7 +146,8 @@ QtObject {
                     badgeUnread: "#504945",
                     statusOnline: "#b8bb26",
                     statusWarning: "#fabd2f",
-                    statusError: "#fb4934"
+                    statusError: "#fb4934",
+                    isDark: true
                 }
 
             case "Solarized Dark":
@@ -140,7 +171,8 @@ QtObject {
                     badgeUnread: "#073642",
                     statusOnline: "#859900",
                     statusWarning: "#b58900",
-                    statusError: "#dc322f"
+                    statusError: "#dc322f",
+                    isDark: true
                 }
 
             case "Cyberpunk / Neon":
@@ -164,7 +196,8 @@ QtObject {
                     badgeUnread: "#252545",
                     statusOnline: "#00f5d4",
                     statusWarning: "#fee440",
-                    statusError: "#f72585"
+                    statusError: "#f72585",
+                    isDark: true
                 }
 
             case "Monokai Pro":
@@ -188,7 +221,8 @@ QtObject {
                     badgeUnread: "#49454a",
                     statusOnline: "#a9dc76",
                     statusWarning: "#ffd866",
-                    statusError: "#ff6188"
+                    statusError: "#ff6188",
+                    isDark: true
                 }
 
             case "GitHub Dark":
@@ -212,7 +246,158 @@ QtObject {
                     badgeUnread: "#21262d",
                     statusOnline: "#3fb950",
                     statusWarning: "#d29922",
-                    statusError: "#f85149"
+                    statusError: "#f85149",
+                    isDark: true
+                }
+
+            case "Catppuccin Latte":
+                return {
+                    bgPrimary: "#eff1f5",
+                    bgSecondary: "#e6e9ef",
+                    bgElevated: "#dce0e8",
+                    bgHover: "#ccd0da",
+                    bgActive: "#bcc0cc",
+                    bgInput: "#e6e9ef",
+                    bgHighlightRow: "#f2d5cf",
+                    borderSubtle: "#ccd0da",
+                    borderFocus: "#8839ef",
+                    textPrimary: "#4c4f69",
+                    textSecondary: "#5c5f77",
+                    textMuted: "#7c7f93",
+                    accentPrimary: "#8839ef",
+                    accentHover: "#7287fd",
+                    accentCyan: "#179299",
+                    badgeHighlight: "#d20f39",
+                    badgeUnread: "#ccd0da",
+                    statusOnline: "#40a02b",
+                    statusWarning: "#df8e1d",
+                    statusError: "#d20f39",
+                    isDark: false
+                }
+
+            case "GitHub Light":
+                return {
+                    bgPrimary: "#ffffff",
+                    bgSecondary: "#f6f8fa",
+                    bgElevated: "#f1f3f5",
+                    bgHover: "#eaeef2",
+                    bgActive: "#d0d7de",
+                    bgInput: "#f6f8fa",
+                    bgHighlightRow: "#fff8c5",
+                    borderSubtle: "#d0d7de",
+                    borderFocus: "#0969da",
+                    textPrimary: "#1f2328",
+                    textSecondary: "#454c54",
+                    textMuted: "#656d76",
+                    accentPrimary: "#0969da",
+                    accentHover: "#0550ae",
+                    accentCyan: "#1b7c83",
+                    badgeHighlight: "#cf222e",
+                    badgeUnread: "#d0d7de",
+                    statusOnline: "#1a7f37",
+                    statusWarning: "#9a6700",
+                    statusError: "#cf222e",
+                    isDark: false
+                }
+
+            case "Solarized Light":
+                return {
+                    bgPrimary: "#fdf6e3",
+                    bgSecondary: "#eee8d5",
+                    bgElevated: "#e0d8c3",
+                    bgHover: "#d3cbb7",
+                    bgActive: "#c4bcab",
+                    bgInput: "#eee8d5",
+                    bgHighlightRow: "#faebd7",
+                    borderSubtle: "#d3cbb7",
+                    borderFocus: "#268bd2",
+                    textPrimary: "#073642",
+                    textSecondary: "#586e75",
+                    textMuted: "#839496",
+                    accentPrimary: "#268bd2",
+                    accentHover: "#2aa198",
+                    accentCyan: "#2aa198",
+                    badgeHighlight: "#dc322f",
+                    badgeUnread: "#d3cbb7",
+                    statusOnline: "#859900",
+                    statusWarning: "#b58900",
+                    statusError: "#dc322f",
+                    isDark: false
+                }
+
+            case "Tokyo Night Day":
+                return {
+                    bgPrimary: "#e1e2e7",
+                    bgSecondary: "#d5d6db",
+                    bgElevated: "#cbccd1",
+                    bgHover: "#c0c1c7",
+                    bgActive: "#b4b5bc",
+                    bgInput: "#d5d6db",
+                    bgHighlightRow: "#e9d5dc",
+                    borderSubtle: "#cbccd1",
+                    borderFocus: "#34548a",
+                    textPrimary: "#2e3338",
+                    textSecondary: "#4c505c",
+                    textMuted: "#84899b",
+                    accentPrimary: "#34548a",
+                    accentHover: "#565a6e",
+                    accentCyan: "#007197",
+                    badgeHighlight: "#8c4351",
+                    badgeUnread: "#cbccd1",
+                    statusOnline: "#587539",
+                    statusWarning: "#8f5e15",
+                    statusError: "#8c4351",
+                    isDark: false
+                }
+
+            case "Nord Light":
+                return {
+                    bgPrimary: "#eceff4",
+                    bgSecondary: "#e5e9f0",
+                    bgElevated: "#d8dee9",
+                    bgHover: "#c8cedb",
+                    bgActive: "#b6bdcc",
+                    bgInput: "#e5e9f0",
+                    bgHighlightRow: "#e2d5de",
+                    borderSubtle: "#d8dee9",
+                    borderFocus: "#5e81ac",
+                    textPrimary: "#2e3440",
+                    textSecondary: "#3b4252",
+                    textMuted: "#4c566a",
+                    accentPrimary: "#5e81ac",
+                    accentHover: "#81a1c1",
+                    accentCyan: "#88c0d0",
+                    badgeHighlight: "#bf616a",
+                    badgeUnread: "#d8dee9",
+                    statusOnline: "#a3be8c",
+                    statusWarning: "#ebcb8b",
+                    statusError: "#bf616a",
+                    isDark: false
+                }
+
+            case "Gruvbox Light":
+                return {
+                    bgPrimary: "#fbf1c7",
+                    bgSecondary: "#f2e5bc",
+                    bgElevated: "#ebdbb2",
+                    bgHover: "#d5c4a1",
+                    bgActive: "#bdae93",
+                    bgInput: "#f2e5bc",
+                    bgHighlightRow: "#f5dfc6",
+                    borderSubtle: "#d5c4a1",
+                    borderFocus: "#af3a03",
+                    textPrimary: "#282828",
+                    textSecondary: "#3c3836",
+                    textMuted: "#7c6f64",
+                    accentPrimary: "#af3a03",
+                    accentHover: "#d65d0e",
+                    accentCyan: "#427b58",
+                    badgeHighlight: "#9d0006",
+                    badgeUnread: "#ebdbb2",
+                    statusOnline: "#79740e",
+                    statusWarning: "#b57614",
+                    statusError: "#9d0006",
+                    isDark: false
                 }
 
             case "Catppuccin Mocha":
@@ -237,7 +422,8 @@ QtObject {
                     badgeUnread: "#313244",
                     statusOnline: "#a6e3a1",
                     statusWarning: "#f9e2af",
-                    statusError: "#f38ba8"
+                    statusError: "#f38ba8",
+                    isDark: true
                 }
         }
     }
@@ -250,6 +436,9 @@ QtObject {
     readonly property color bgActive: currentThemeData.bgActive
     readonly property color bgInput: currentThemeData.bgInput
     readonly property color bgHighlightRow: currentThemeData.bgHighlightRow
+    readonly property color bgRowAlt: (currentThemeData.bgRowAlt !== undefined && currentThemeData.bgRowAlt.length > 0)
+        ? currentThemeData.bgRowAlt
+        : (isDark ? Qt.rgba(1, 1, 1, 0.025) : Qt.rgba(0, 0, 0, 0.028))
 
     // Dynamic Borders & Dividers
     readonly property color borderSubtle: currentThemeData.borderSubtle
@@ -269,6 +458,28 @@ QtObject {
     readonly property color statusOnline: currentThemeData.statusOnline
     readonly property color statusWarning: currentThemeData.statusWarning
     readonly property color statusError: currentThemeData.statusError
+
+    // Whether active theme is dark or light
+    readonly property bool isDark: currentThemeData.isDark !== undefined ? currentThemeData.isDark : true
+
+    // Check if a specific theme name is a dark theme
+    function isThemeDark(name) {
+        return lightThemes.indexOf(name) === -1
+    }
+
+    // Adapts bright nick colors for high contrast when running a light theme
+    function adaptNickColor(col) {
+        if (isDark) return col
+        var c = Qt.color(col)
+        // Relative luminance formula (ITU-R BT.709 / sRGB)
+        var lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b
+        if (lum > 0.55) {
+            return Qt.darker(col, 1.45)
+        } else if (lum > 0.4) {
+            return Qt.darker(col, 1.25)
+        }
+        return col
+    }
 
     // Font configurations
     property string fontSans: "Inter, Noto Sans, Cantarell, sans-serif"

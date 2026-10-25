@@ -21,11 +21,14 @@ Rectangle {
     signal quickSwitcherRequested()
 
     function insertMention(nick) {
-        if (nick.length === 0) return
+        if (!nick || nick.trim().length === 0) return
+        var cleanNick = nick.trim().replace(/^[@+~&%]/, "")
+        if (cleanNick.length === 0) return
+        var prefix = cleanNick + ": "
         if (chatInput.text.length === 0) {
-            chatInput.text = nick + ": "
-        } else {
-            chatInput.text = chatInput.text + " @" + nick + " "
+            chatInput.text = prefix
+        } else if (!chatInput.text.startsWith(prefix)) {
+            chatInput.text = prefix + chatInput.text
         }
         chatInput.cursorPosition = chatInput.text.length
         chatInput.forceActiveFocus()

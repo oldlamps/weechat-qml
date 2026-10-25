@@ -48,6 +48,8 @@ pub struct RelayController {
     pub confirm_on_quit: qt_property!(bool; NOTIFY preferences_changed),
     pub close_to_tray: qt_property!(bool; NOTIFY preferences_changed),
     pub custom_browser: qt_property!(QString; NOTIFY preferences_changed),
+    pub classic_mode: qt_property!(bool; NOTIFY preferences_changed),
+    pub alternating_row_colors: qt_property!(bool; NOTIFY preferences_changed),
 
     // Active buffer metadata properties
     pub active_buffer_ptr: qt_property!(QString; NOTIFY active_buffer_changed),
@@ -56,6 +58,7 @@ pub struct RelayController {
     pub active_buffer_type: qt_property!(QString; NOTIFY active_buffer_changed),
     pub active_buffer_topic: qt_property!(QString; NOTIFY active_buffer_changed),
     pub active_buffer_nick_count: qt_property!(i32; NOTIFY nick_count_changed),
+    pub active_buffer_is_operator: qt_property!(bool; NOTIFY nick_count_changed),
     pub total_unread_count: qt_property!(i32; NOTIFY hotlist_summary_changed),
     pub total_highlight_count: qt_property!(i32; NOTIFY hotlist_summary_changed),
     pub search_match_count: qt_property!(i32; NOTIFY search_changed),
@@ -126,6 +129,10 @@ pub struct RelayController {
     pub toggle_close_to_tray: qt_method!(fn(&mut self)),
     pub set_close_to_tray: qt_method!(fn(&mut self, enabled: bool)),
     pub set_custom_browser: qt_method!(fn(&mut self, browser: QString)),
+    pub toggle_classic_mode: qt_method!(fn(&mut self)),
+    pub set_classic_mode: qt_method!(fn(&mut self, enabled: bool)),
+    pub toggle_alternating_row_colors: qt_method!(fn(&mut self)),
+    pub set_alternating_row_colors: qt_method!(fn(&mut self, enabled: bool)),
     pub open_url: qt_method!(fn(&self, url: QString)),
     pub filter_buffers: qt_method!(fn(&mut self, query: QString)),
     pub search_in_buffer: qt_method!(fn(&mut self, query: QString)),
@@ -176,6 +183,7 @@ pub struct RelayController {
     cmd_tx: Option<mpsc::UnboundedSender<ClientCommand>>,
     buffers_cache: Vec<RelayBuffer>,
     lines_cache: HashMap<String, Vec<RelayLine>>,
+    message_items_cache: HashMap<String, Vec<MessageItem>>,
     nicks_cache: HashMap<String, Vec<RelayNick>>,
     unread_map: HashMap<String, (i32, i32)>, // buffer_ptr -> (unread, highlight)
     buffer_filter_query: String,
@@ -326,12 +334,15 @@ impl Default for RelayController {
             confirm_on_quit: true,
             close_to_tray: true,
             custom_browser: QString::default(),
+            classic_mode: false,
+            alternating_row_colors: true,
             active_buffer_ptr: QString::default(),
             active_buffer_name: QString::default(),
             active_buffer_server: QString::default(),
             active_buffer_type: QString::default(),
             active_buffer_topic: QString::default(),
             active_buffer_nick_count: 0,
+            active_buffer_is_operator: false,
             total_unread_count: 0,
             total_highlight_count: 0,
             search_match_count: 0,
@@ -384,6 +395,10 @@ impl Default for RelayController {
             toggle_close_to_tray: Default::default(),
             set_close_to_tray: Default::default(),
             set_custom_browser: Default::default(),
+            toggle_classic_mode: Default::default(),
+            set_classic_mode: Default::default(),
+            toggle_alternating_row_colors: Default::default(),
+            set_alternating_row_colors: Default::default(),
             open_url: Default::default(),
             filter_buffers: Default::default(),
             search_in_buffer: Default::default(),
@@ -413,6 +428,7 @@ impl Default for RelayController {
             cmd_tx: None,
             buffers_cache: Vec::new(),
             lines_cache: HashMap::new(),
+            message_items_cache: HashMap::new(),
             nicks_cache: HashMap::new(),
             unread_map: HashMap::new(),
             buffer_filter_query: String::new(),
@@ -445,6 +461,8 @@ impl RelayController {
         self.confirm_on_quit = cfg.confirm_on_quit;
         self.close_to_tray = cfg.close_to_tray;
         self.custom_browser = cfg.custom_browser.clone().into();
+        self.classic_mode = cfg.classic_mode;
+        self.alternating_row_colors = cfg.alternating_row_colors;
         self.sidebar_server_order = cfg.sidebar_server_order.clone();
         self.collapsed_servers = cfg.collapsed_servers.iter().cloned().collect();
         self.preferences_changed();
@@ -515,6 +533,7 @@ impl RelayController {
         self.error_message = QString::default();
         self.error_message_changed();
         self.lines_cache.clear();
+        self.message_items_cache.clear();
         self.unread_map.clear();
         self.nicks_cache.clear();
 
@@ -584,15 +603,29 @@ impl RelayController {
         self.connection_state_changed();
     }
 
+    fn max_buffer_lines(&self) -> usize {
+        let init = if self.initial_lines_fetch > 0 {
+            self.initial_lines_fetch as usize
+        } else {
+            150
+        };
+        (init * 10).clamp(1500, 5000)
+    }
+
     fn merge_lines(&mut self, buffer_ptr: &str, new_lines: Vec<RelayLine>) {
         let norm_ptr = normalize_ptr(buffer_ptr);
         if norm_ptr.is_empty() || norm_ptr == "0x0" {
             return;
         }
 
+        let max_lines = self.max_buffer_lines();
         let entry = self.lines_cache.entry(norm_ptr).or_default();
         if entry.is_empty() {
             *entry = new_lines;
+            if entry.len() > max_lines {
+                let excess = entry.len() - max_lines;
+                entry.drain(0..excess);
+            }
             return;
         }
 
@@ -600,27 +633,37 @@ impl RelayController {
             return;
         }
 
+        let mut existing_ptrs: HashSet<String> = entry
+            .iter()
+            .filter(|l| !l.line_ptr.is_empty() && l.line_ptr != "0x0")
+            .map(|l| l.line_ptr.clone())
+            .collect();
+
         for new_line in new_lines {
-            let already_exists = entry.iter().any(|existing| {
-                if !existing.line_ptr.is_empty()
-                    && existing.line_ptr != "0x0"
-                    && !new_line.line_ptr.is_empty()
-                    && new_line.line_ptr != "0x0"
-                {
-                    existing.line_ptr == new_line.line_ptr
-                } else {
+            let already_exists = if !new_line.line_ptr.is_empty() && new_line.line_ptr != "0x0" {
+                existing_ptrs.contains(&new_line.line_ptr)
+            } else {
+                entry.iter().rev().take(100).any(|existing| {
                     existing.timestamp == new_line.timestamp
                         && existing.prefix == new_line.prefix
                         && existing.message == new_line.message
-                }
-            });
+                })
+            };
 
             if !already_exists {
+                if !new_line.line_ptr.is_empty() && new_line.line_ptr != "0x0" {
+                    existing_ptrs.insert(new_line.line_ptr.clone());
+                }
                 entry.push(new_line);
             }
         }
 
         entry.sort_by_key(|l| l.timestamp);
+
+        if entry.len() > max_lines {
+            let excess = entry.len() - max_lines;
+            entry.drain(0..excess);
+        }
     }
 
     pub fn handle_relay_event(&mut self, ev: RelayEvent) {
@@ -688,8 +731,11 @@ impl RelayController {
                 let active_str = normalize_ptr(&self.active_buffer_ptr.to_string());
                 let is_current = !active_str.is_empty() && active_str == norm_ptr;
                 self.merge_lines(&norm_ptr, lines);
+                let items = self.build_items_for_buffer(&norm_ptr);
+                self.message_items_cache
+                    .insert(norm_ptr.clone(), items.clone());
                 if is_current {
-                    self.rebuild_message_model();
+                    self.message_model.borrow_mut().reset_data(items);
                     self.new_message_arrived();
                 }
             }
@@ -726,26 +772,75 @@ impl RelayController {
                     });
                 }
 
-                let lines = self.lines_cache.entry(buf_ptr.clone()).or_default();
-                let already_exists = lines.iter().any(|l| {
-                    if !l.line_ptr.is_empty()
-                        && l.line_ptr != "0x0"
-                        && !line.line_ptr.is_empty()
-                        && line.line_ptr != "0x0"
-                    {
-                        l.line_ptr == line.line_ptr
-                    } else {
-                        l.timestamp == line.timestamp
-                            && l.prefix == line.prefix
-                            && l.message == line.message
-                    }
-                });
+                let max_lines = self.max_buffer_lines();
+                let already_exists = {
+                    let lines = self.lines_cache.entry(buf_ptr.clone()).or_default();
+                    lines.iter().rev().take(50).any(|l| {
+                        if !l.line_ptr.is_empty()
+                            && l.line_ptr != "0x0"
+                            && !line.line_ptr.is_empty()
+                            && line.line_ptr != "0x0"
+                        {
+                            l.line_ptr == line.line_ptr
+                        } else {
+                            l.timestamp == line.timestamp
+                                && l.prefix == line.prefix
+                                && l.message == line.message
+                        }
+                    })
+                };
 
                 if !already_exists {
-                    lines.push(line.clone());
+                    {
+                        let lines = self.lines_cache.entry(buf_ptr.clone()).or_default();
+                        lines.push(line.clone());
+                        if lines.len() > max_lines {
+                            let excess = lines.len() - max_lines;
+                            lines.drain(0..excess);
+                        }
+                    }
+
                     if is_active {
                         self.append_single_message_to_model(&line);
                         self.new_message_arrived();
+                    } else if self.message_items_cache.contains_key(&buf_ptr) {
+                        let is_join_part = line.tags.iter().any(|t| {
+                            matches!(
+                                t.as_str(),
+                                "irc_join" | "irc_part" | "irc_quit" | "irc_nick" | "irc_smart_filter"
+                            )
+                        });
+                        if !is_join_part || self.show_join_part_quit {
+                            let (mut prev_sender, mut prev_ts, mut prev_date_str) = {
+                                let cached = self.message_items_cache.get(&buf_ptr).unwrap();
+                                let mut s = String::new();
+                                let mut ts = 0;
+                                let mut d = String::new();
+                                if let Some(last) = cached.last() {
+                                    if !self.classic_mode && !last.is_system && !last.is_action {
+                                        s = last.prefix_plain.to_string();
+                                        ts = last.timestamp;
+                                    }
+                                    d = format_date_header(last.timestamp);
+                                }
+                                (s, ts, d)
+                            };
+                            let mut match_count = 0;
+                            let item = self.convert_line_to_item(
+                                &line,
+                                &mut prev_sender,
+                                &mut prev_ts,
+                                &mut prev_date_str,
+                                &mut match_count,
+                            );
+                            if let Some(cached) = self.message_items_cache.get_mut(&buf_ptr) {
+                                cached.push(item);
+                                if cached.len() > max_lines {
+                                    let excess = cached.len() - max_lines;
+                                    cached.drain(0..excess);
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -926,6 +1021,7 @@ impl RelayController {
             RelayEvent::BufferCleared { buffer_ptr } => {
                 let norm_ptr = normalize_ptr(&buffer_ptr);
                 self.lines_cache.remove(&norm_ptr);
+                self.message_items_cache.remove(&norm_ptr);
                 let active_str = normalize_ptr(&self.active_buffer_ptr.to_string());
                 if active_str == norm_ptr {
                     self.rebuild_message_model();
@@ -952,6 +1048,7 @@ impl RelayController {
                     b.ptr != norm_ptr && (full_name.is_empty() || b.full_name != full_name)
                 });
                 self.lines_cache.remove(&norm_ptr);
+                self.message_items_cache.remove(&norm_ptr);
                 self.nicks_cache.remove(&norm_ptr);
                 self.unread_map.remove(&norm_ptr);
 
@@ -1486,6 +1583,7 @@ impl RelayController {
         self.show_join_part_quit = enabled;
         self.save_current_config();
         self.preferences_changed();
+        self.message_items_cache.clear();
         self.rebuild_message_model();
     }
 
@@ -1531,6 +1629,7 @@ impl RelayController {
         self.timestamp_format = format;
         self.save_current_config();
         self.preferences_changed();
+        self.message_items_cache.clear();
         self.rebuild_message_model();
     }
 
@@ -1570,6 +1669,30 @@ impl RelayController {
         self.preferences_changed();
     }
 
+    pub fn toggle_classic_mode(&mut self) {
+        self.set_classic_mode(!self.classic_mode);
+    }
+
+    pub fn set_classic_mode(&mut self, enabled: bool) {
+        self.classic_mode = enabled;
+        self.save_current_config();
+        self.preferences_changed();
+        self.message_items_cache.clear();
+        self.rebuild_message_model();
+    }
+
+    pub fn toggle_alternating_row_colors(&mut self) {
+        self.set_alternating_row_colors(!self.alternating_row_colors);
+    }
+
+    pub fn set_alternating_row_colors(&mut self, enabled: bool) {
+        if self.alternating_row_colors != enabled {
+            self.alternating_row_colors = enabled;
+            self.save_current_config();
+            self.preferences_changed();
+        }
+    }
+
     pub fn open_url(&self, url: QString) {
         let u = url.to_string();
         if u.is_empty() {
@@ -1588,6 +1711,7 @@ impl RelayController {
 
     pub fn search_in_buffer(&mut self, query: QString) {
         self.message_search_query = query.to_string().to_lowercase();
+        self.message_items_cache.clear();
         self.rebuild_message_model();
     }
 
@@ -1869,11 +1993,47 @@ impl RelayController {
 
     fn rebuild_message_model(&mut self) {
         let active_ptr = normalize_ptr(&self.active_buffer_ptr.to_string());
-        let raw_lines = self
-            .lines_cache
-            .get(&active_ptr)
-            .cloned()
-            .unwrap_or_default();
+        if active_ptr.is_empty() || active_ptr == "0x0" {
+            self.message_model.borrow_mut().reset_data(Vec::new());
+            self.search_match_count = 0;
+            self.search_changed();
+            return;
+        }
+
+        // Fast path: if formatted items are already cached for this buffer, reuse them directly!
+        if let Some(cached_items) = self.message_items_cache.get(&active_ptr) {
+            let match_count = if !self.message_search_query.is_empty() {
+                cached_items.iter().filter(|i| i.matches_search).count() as i32
+            } else {
+                0
+            };
+            self.message_model
+                .borrow_mut()
+                .reset_data(cached_items.clone());
+            self.search_match_count = match_count;
+            self.search_changed();
+            return;
+        }
+
+        // Slow path: generate items from lines_cache, cache them, and update model
+        let items = self.build_items_for_buffer(&active_ptr);
+        self.message_items_cache
+            .insert(active_ptr.clone(), items.clone());
+        let match_count = if !self.message_search_query.is_empty() {
+            items.iter().filter(|i| i.matches_search).count() as i32
+        } else {
+            0
+        };
+        self.message_model.borrow_mut().reset_data(items);
+        self.search_match_count = match_count;
+        self.search_changed();
+    }
+
+    fn build_items_for_buffer(&self, buffer_ptr: &str) -> Vec<MessageItem> {
+        let norm_ptr = normalize_ptr(buffer_ptr);
+        let Some(raw_lines) = self.lines_cache.get(&norm_ptr) else {
+            return Vec::new();
+        };
 
         let mut items = Vec::with_capacity(raw_lines.len());
         let mut prev_sender = String::new();
@@ -1881,7 +2041,7 @@ impl RelayController {
         let mut prev_date_str = String::new();
         let mut match_count = 0;
 
-        for line in &raw_lines {
+        for line in raw_lines {
             let is_join_part = line.tags.iter().any(|t| {
                 matches!(
                     t.as_str(),
@@ -1902,9 +2062,7 @@ impl RelayController {
             items.push(item);
         }
 
-        self.message_model.borrow_mut().reset_data(items);
-        self.search_match_count = match_count;
-        self.search_changed();
+        items
     }
 
     fn append_single_message_to_model(&mut self, line: &RelayLine) {
@@ -1927,7 +2085,7 @@ impl RelayController {
             let count = model.row_count() as usize;
             if count > 0 {
                 let last = &model[count - 1];
-                if !last.is_system && !last.is_action {
+                if !self.classic_mode && !last.is_system && !last.is_action {
                     prev_sender = last.prefix_plain.to_string();
                     prev_ts = last.timestamp;
                 }
@@ -1943,7 +2101,24 @@ impl RelayController {
             &mut prev_date_str,
             &mut match_count,
         );
-        self.message_model.borrow_mut().push(item);
+
+        let max_lines = self.max_buffer_lines();
+        {
+            let mut model = self.message_model.borrow_mut();
+            model.push(item.clone());
+            if model.row_count() as usize > max_lines {
+                model.remove(0);
+            }
+        }
+
+        if let Some(cached) = self.message_items_cache.get_mut(&line.buffer_ptr) {
+            cached.push(item);
+            if cached.len() > max_lines {
+                let excess = cached.len() - max_lines;
+                cached.drain(0..excess);
+            }
+        }
+
         self.search_match_count = match_count;
         self.search_changed();
     }
@@ -1997,7 +2172,8 @@ impl RelayController {
             String::new()
         };
 
-        let is_grouped = !is_system
+        let is_grouped = !self.classic_mode
+            && !is_system
             && !is_action
             && date_header.is_empty()
             && !clean_nick.is_empty()
@@ -2089,6 +2265,33 @@ impl RelayController {
             .collect();
 
         self.active_buffer_nick_count = items.len() as i32;
+
+        let own_nick = self
+            .buffers_cache
+            .iter()
+            .find(|b| b.ptr == active_ptr)
+            .and_then(|b| {
+                b.local_vars.get("nick").cloned().or_else(|| {
+                    let s = &b.server_name;
+                    self.buffers_cache
+                        .iter()
+                        .find(|other| &other.server_name == s && other.local_vars.contains_key("nick"))
+                        .and_then(|other| other.local_vars.get("nick").cloned())
+                })
+            });
+
+        let is_channel = self.active_buffer_type.to_string() == "channel";
+        let is_op = if is_channel && let Some(nick) = &own_nick {
+            raw_nicks
+                .iter()
+                .find(|n| n.name.eq_ignore_ascii_case(nick))
+                .map(|n| nick_role_rank(&n.prefix, &n.group_name) == 0)
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        self.active_buffer_is_operator = is_op;
+
         self.nick_model.borrow_mut().reset_data(items);
         self.nick_count_changed();
     }
@@ -2119,6 +2322,8 @@ impl RelayController {
             confirm_on_quit: self.confirm_on_quit,
             close_to_tray: self.close_to_tray,
             custom_browser: self.custom_browser.to_string(),
+            classic_mode: self.classic_mode,
+            alternating_row_colors: self.alternating_row_colors,
             sidebar_server_order: self.sidebar_server_order.clone(),
             collapsed_servers: self.collapsed_servers.iter().cloned().collect(),
         };
@@ -2769,6 +2974,12 @@ mod tests {
         controller.set_custom_browser("firefox --new-tab".into());
         assert_eq!(controller.custom_browser.to_string(), "firefox --new-tab");
 
+        controller.set_classic_mode(true);
+        assert!(controller.classic_mode);
+
+        controller.set_alternating_row_colors(false);
+        assert!(!controller.alternating_row_colors);
+
         // Verify that AppConfig::load() reflects these saved settings
         let loaded = AppConfig::load();
         assert_eq!(loaded.font_size, 18);
@@ -2782,6 +2993,8 @@ mod tests {
         assert!(!loaded.confirm_on_quit);
         assert!(!loaded.close_to_tray);
         assert_eq!(loaded.custom_browser, "firefox --new-tab");
+        assert!(loaded.classic_mode);
+        assert!(!loaded.alternating_row_colors);
 
         // Verify that instantiating a new RelayController::default() immediately loads these values
         let mut new_controller = RelayController::default();
@@ -2789,6 +3002,8 @@ mod tests {
         assert_eq!(new_controller.theme_name.to_string(), "Tokyo Night");
         assert!(!new_controller.desktop_notifications);
         assert!(!new_controller.show_media_previews);
+        assert!(new_controller.classic_mode);
+        assert!(!new_controller.alternating_row_colors);
         assert!(new_controller.show_join_part_quit);
         assert_eq!(new_controller.timestamp_format.to_string(), "%H:%M:%S");
         assert_eq!(new_controller.initial_lines_fetch, 250);
@@ -2803,6 +3018,8 @@ mod tests {
         // Verify toggles flip values, save them, and init_controller preserves them
         new_controller.toggle_desktop_notifications();
         assert!(new_controller.desktop_notifications);
+        new_controller.toggle_alternating_row_colors();
+        assert!(new_controller.alternating_row_colors);
         new_controller.toggle_join_part_quit();
         assert!(!new_controller.show_join_part_quit);
         new_controller.toggle_confirm_on_quit();
@@ -2812,6 +3029,7 @@ mod tests {
 
         let reloaded_cfg = AppConfig::load();
         assert!(reloaded_cfg.desktop_notifications);
+        assert!(reloaded_cfg.alternating_row_colors);
         assert!(!reloaded_cfg.show_join_part_quit);
         assert!(reloaded_cfg.confirm_on_quit);
         assert!(reloaded_cfg.close_to_tray);
@@ -2819,6 +3037,7 @@ mod tests {
         let mut restarted_controller = RelayController::default();
         restarted_controller.init_controller();
         assert!(restarted_controller.desktop_notifications);
+        assert!(restarted_controller.alternating_row_colors);
         assert!(!restarted_controller.show_join_part_quit);
         assert!(restarted_controller.confirm_on_quit);
         assert!(restarted_controller.close_to_tray);
@@ -2826,6 +3045,59 @@ mod tests {
             restarted_controller.custom_browser.to_string(),
             "firefox --new-tab"
         );
+    }
+
+    #[test]
+    fn test_classic_mode_disables_message_grouping() {
+        let mut controller = RelayController::default();
+        let buf_ptr = "0x1234abcd".to_string();
+        controller.active_buffer_ptr = buf_ptr.clone().into();
+
+        let line1 = RelayLine {
+            line_ptr: "0xline1".to_string(),
+            buffer_ptr: buf_ptr.clone(),
+            timestamp: 1700000000,
+            notify_level: 0,
+            displayed: true,
+            highlight: false,
+            tags: vec!["irc_privmsg".to_string()],
+            prefix: "alice".to_string(),
+            message: "First message from alice".to_string(),
+        };
+
+        let line2 = RelayLine {
+            line_ptr: "0xline2".to_string(),
+            buffer_ptr: buf_ptr.clone(),
+            timestamp: 1700000010,
+            notify_level: 0,
+            displayed: true,
+            highlight: false,
+            tags: vec!["irc_privmsg".to_string()],
+            prefix: "alice".to_string(),
+            message: "Second burst message from alice".to_string(),
+        };
+
+        controller
+            .lines_cache
+            .insert(buf_ptr.clone(), vec![line1.clone(), line2.clone()]);
+
+        // Modern mode: consecutive lines from the same nick within 300s are grouped
+        controller.set_classic_mode(false);
+        {
+            let model = controller.message_model.borrow();
+            assert_eq!(model.row_count(), 2);
+            assert!(!model[0].is_grouped);
+            assert!(model[1].is_grouped);
+        }
+
+        // Classic mode: every line preserves its nick and is NOT grouped
+        controller.set_classic_mode(true);
+        {
+            let model = controller.message_model.borrow();
+            assert_eq!(model.row_count(), 2);
+            assert!(!model[0].is_grouped);
+            assert!(!model[1].is_grouped);
+        }
     }
 
     #[test]
@@ -3294,5 +3566,373 @@ mod tests {
         controller.select_next_unread_buffer();
         assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
         assert_eq!(controller.active_buffer_server.to_string(), "Libera");
+    }
+
+    #[test]
+    fn test_message_items_cache_and_fast_buffer_switching() {
+        let mut controller = RelayController::default();
+        let b1 = RelayBuffer {
+            ptr: "0x10".to_string(),
+            number: 1,
+            full_name: "irc.server.#chan1".to_string(),
+            short_name: "#chan1".to_string(),
+            server_name: "server".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b2 = RelayBuffer {
+            ptr: "0x20".to_string(),
+            number: 2,
+            full_name: "irc.server.#chan2".to_string(),
+            short_name: "#chan2".to_string(),
+            server_name: "server".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        controller.buffers_cache = vec![b1, b2];
+
+        // Populate lines_cache for both buffers
+        let lines1 = (0..50)
+            .map(|i| RelayLine {
+                buffer_ptr: "0x10".to_string(),
+                line_ptr: format!("0xline1_{}", i),
+                timestamp: 1000 + i,
+                prefix: "alice".to_string(),
+                message: format!("Message {} in chan1", i),
+                tags: vec!["irc_privmsg".to_string()],
+                displayed: true,
+                highlight: false,
+                notify_level: 0,
+            })
+            .collect();
+        let lines2 = (0..50)
+            .map(|i| RelayLine {
+                buffer_ptr: "0x20".to_string(),
+                line_ptr: format!("0xline2_{}", i),
+                timestamp: 2000 + i,
+                prefix: "bob".to_string(),
+                message: format!("Message {} in chan2", i),
+                tags: vec!["irc_privmsg".to_string()],
+                displayed: true,
+                highlight: false,
+                notify_level: 0,
+            })
+            .collect();
+
+        controller.lines_cache.insert("0x10".to_string(), lines1);
+        controller.lines_cache.insert("0x20".to_string(), lines2);
+
+        // Initially message_items_cache is empty
+        assert!(controller.message_items_cache.is_empty());
+
+        // 1. Select buffer 1: items should be formatted and cached
+        controller.select_buffer("0x10".into());
+        assert_eq!(controller.message_model.borrow().row_count(), 50);
+        assert!(controller.message_items_cache.contains_key("0x10"));
+        assert_eq!(controller.message_items_cache.get("0x10").unwrap().len(), 50);
+
+        // 2. Select buffer 2: items formatted and cached for buffer 2
+        controller.select_buffer("0x20".into());
+        assert_eq!(controller.message_model.borrow().row_count(), 50);
+        assert!(controller.message_items_cache.contains_key("0x20"));
+
+        // 3. Switch back to buffer 1: reused directly from message_items_cache
+        controller.select_buffer("0x10".into());
+        assert_eq!(controller.message_model.borrow().row_count(), 50);
+        assert_eq!(
+            controller.message_model.borrow()[0].styled_text.to_string(),
+            "Message 0 in chan1"
+        );
+    }
+
+    #[test]
+    fn test_background_buffer_incremental_caching() {
+        let mut controller = RelayController::default();
+        let b1 = RelayBuffer {
+            ptr: "0x100".to_string(),
+            number: 1,
+            full_name: "irc.server.#active".to_string(),
+            short_name: "#active".to_string(),
+            server_name: "server".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        let b2 = RelayBuffer {
+            ptr: "0x200".to_string(),
+            number: 2,
+            full_name: "irc.server.#background".to_string(),
+            short_name: "#background".to_string(),
+            server_name: "server".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        };
+        controller.buffers_cache = vec![b1, b2];
+
+        // Seed backlog for both
+        controller.handle_relay_event(RelayEvent::BufferLinesFetched {
+            buffer_ptr: "0x100".to_string(),
+            lines: vec![RelayLine {
+                buffer_ptr: "0x100".to_string(),
+                line_ptr: "0xL1".to_string(),
+                timestamp: 100,
+                prefix: "alice".to_string(),
+                message: "active msg 1".to_string(),
+                tags: vec!["irc_privmsg".to_string()],
+                displayed: true,
+                highlight: false,
+                notify_level: 0,
+            }],
+            prepend: false,
+        });
+
+        controller.handle_relay_event(RelayEvent::BufferLinesFetched {
+            buffer_ptr: "0x200".to_string(),
+            lines: vec![RelayLine {
+                buffer_ptr: "0x200".to_string(),
+                line_ptr: "0xL2".to_string(),
+                timestamp: 100,
+                prefix: "bob".to_string(),
+                message: "bg msg 1".to_string(),
+                tags: vec!["irc_privmsg".to_string()],
+                displayed: true,
+                highlight: false,
+                notify_level: 0,
+            }],
+            prepend: false,
+        });
+
+        // Activate 0x100
+        controller.select_buffer("0x100".into());
+        assert_eq!(controller.active_buffer_ptr.to_string(), "0x100");
+
+        // Incoming live message for background buffer 0x200
+        controller.handle_relay_event(RelayEvent::LineAdded(RelayLine {
+            buffer_ptr: "0x200".to_string(),
+            line_ptr: "0xL3".to_string(),
+            timestamp: 200,
+            prefix: "charlie".to_string(),
+            message: "bg live message".to_string(),
+            tags: vec!["irc_privmsg".to_string()],
+            displayed: true,
+            highlight: false,
+            notify_level: 0,
+        }));
+
+        // Background buffer cached items was incrementally updated!
+        let cached_bg = controller.message_items_cache.get("0x200").unwrap();
+        assert_eq!(cached_bg.len(), 2);
+        assert_eq!(cached_bg[1].styled_text.to_string(), "bg live message");
+
+        // When switching to 0x200, model instantly reflects the 2 messages without bulk conversion
+        controller.select_buffer("0x200".into());
+        assert_eq!(controller.message_model.borrow().row_count(), 2);
+        assert_eq!(
+            controller.message_model.borrow()[1].styled_text.to_string(),
+            "bg live message"
+        );
+    }
+
+    #[test]
+    fn test_max_buffer_lines_capping_and_ring_buffer() {
+        let mut controller = RelayController::default();
+        controller.set_initial_lines_fetch(150);
+        let max_lines = controller.max_buffer_lines();
+        assert_eq!(max_lines, 1500);
+
+        let buf_ptr = "0x999";
+        controller.buffers_cache = vec![RelayBuffer {
+            ptr: buf_ptr.to_string(),
+            number: 1,
+            full_name: "irc.server.#overflow".to_string(),
+            short_name: "#overflow".to_string(),
+            server_name: "server".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        }];
+
+        controller.select_buffer(buf_ptr.into());
+
+        // Feed 1520 lines into the buffer
+        let new_lines: Vec<RelayLine> = (0..1520)
+            .map(|i| RelayLine {
+                buffer_ptr: buf_ptr.to_string(),
+                line_ptr: format!("0xline_{}", i),
+                timestamp: 1000 + i,
+                prefix: "user".to_string(),
+                message: format!("line {}", i),
+                tags: vec!["irc_privmsg".to_string()],
+                displayed: true,
+                highlight: false,
+                notify_level: 0,
+            })
+            .collect();
+
+        controller.handle_relay_event(RelayEvent::BufferLinesFetched {
+            buffer_ptr: buf_ptr.to_string(),
+            lines: new_lines,
+            prepend: false,
+        });
+
+        // lines_cache and model must be capped at 1500, preserving newest
+        let lines = controller.lines_cache.get(buf_ptr).unwrap();
+        assert_eq!(lines.len(), 1500);
+        assert_eq!(lines[0].message, "line 20");
+        assert_eq!(lines[1499].message, "line 1519");
+
+        assert_eq!(controller.message_model.borrow().row_count(), 1500);
+
+        // Add 1 more live line: model and cache stay at 1500
+        controller.handle_relay_event(RelayEvent::LineAdded(RelayLine {
+            buffer_ptr: buf_ptr.to_string(),
+            line_ptr: "0xline_1520".to_string(),
+            timestamp: 1000 + 1520,
+            prefix: "user".to_string(),
+            message: "line 1520".to_string(),
+            tags: vec!["irc_privmsg".to_string()],
+            displayed: true,
+            highlight: false,
+            notify_level: 0,
+        }));
+
+        assert_eq!(controller.lines_cache.get(buf_ptr).unwrap().len(), 1500);
+        assert_eq!(controller.message_model.borrow().row_count(), 1500);
+        assert_eq!(
+            controller.message_model.borrow()[1499].styled_text.to_string(),
+            "line 1520"
+        );
+    }
+
+    #[test]
+    fn test_settings_change_invalidates_message_items_cache() {
+        let mut controller = RelayController::default();
+        let buf_ptr = "0x55";
+        controller.buffers_cache = vec![RelayBuffer {
+            ptr: buf_ptr.to_string(),
+            number: 1,
+            full_name: "irc.server.#test".to_string(),
+            short_name: "#test".to_string(),
+            server_name: "server".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars: HashMap::new(),
+        }];
+
+        let lines = vec![
+            RelayLine {
+                buffer_ptr: buf_ptr.to_string(),
+                line_ptr: "0x1".to_string(),
+                timestamp: 1700000000,
+                prefix: "alice".to_string(),
+                message: "hello 1".to_string(),
+                tags: vec!["irc_privmsg".to_string()],
+                displayed: true,
+                highlight: false,
+                notify_level: 0,
+            },
+            RelayLine {
+                buffer_ptr: buf_ptr.to_string(),
+                line_ptr: "0x2".to_string(),
+                timestamp: 1700000010,
+                prefix: "alice".to_string(),
+                message: "hello 2".to_string(),
+                tags: vec!["irc_privmsg".to_string()],
+                displayed: true,
+                highlight: false,
+                notify_level: 0,
+            },
+        ];
+        controller.lines_cache.insert(buf_ptr.to_string(), lines);
+        controller.set_classic_mode(false);
+        controller.select_buffer(buf_ptr.into());
+
+        // Initially in modern mode, line 2 is grouped
+        assert!(controller.message_model.borrow()[1].is_grouped);
+        assert!(controller.message_items_cache.contains_key(buf_ptr));
+
+        // Switch to classic mode: cache is invalidated and rebuilt, is_grouped becomes false
+        controller.set_classic_mode(true);
+        assert!(!controller.message_model.borrow()[1].is_grouped);
+
+        // Timestamp format change invalidates cache and rebuilds timestamps
+        controller.set_timestamp_format("%H:%M:%S".into());
+        assert!(controller.message_model.borrow()[0]
+            .time_str
+            .to_string()
+            .contains(':'));
+    }
+
+    #[test]
+    fn test_active_buffer_operator_detection() {
+        let mut controller = RelayController::default();
+        let buf_ptr = "0x99";
+        let mut local_vars = HashMap::new();
+        local_vars.insert("nick".to_string(), "myuser".to_string());
+        local_vars.insert("type".to_string(), "channel".to_string());
+
+        controller.buffers_cache = vec![RelayBuffer {
+            ptr: buf_ptr.to_string(),
+            number: 1,
+            full_name: "irc.libera.#channel".to_string(),
+            short_name: "#channel".to_string(),
+            server_name: "libera".to_string(),
+            buffer_type: "channel".to_string(),
+            title: "".to_string(),
+            notify_level: 0,
+            local_vars,
+        }];
+
+        // Case 1: user is a regular user (no op prefix)
+        let nicks = vec![
+            RelayNick {
+                buffer_ptr: buf_ptr.to_string(),
+                group_name: "3:0".to_string(),
+                name: "myuser".to_string(),
+                prefix: " ".to_string(),
+                color: "white".to_string(),
+                visible: true,
+            },
+            RelayNick {
+                buffer_ptr: buf_ptr.to_string(),
+                group_name: "0:0".to_string(),
+                name: "admin".to_string(),
+                prefix: "@".to_string(),
+                color: "red".to_string(),
+                visible: true,
+            },
+        ];
+        controller.nicks_cache.insert(buf_ptr.to_string(), nicks);
+        controller.select_buffer(buf_ptr.into());
+        assert!(!controller.active_buffer_is_operator);
+
+        // Case 2: user receives operator status (@)
+        let nicks_opped = vec![
+            RelayNick {
+                buffer_ptr: buf_ptr.to_string(),
+                group_name: "0:0".to_string(),
+                name: "myuser".to_string(),
+                prefix: "@".to_string(),
+                color: "white".to_string(),
+                visible: true,
+            },
+        ];
+        controller.nicks_cache.insert(buf_ptr.to_string(), nicks_opped);
+        controller.rebuild_nick_model();
+        assert!(controller.active_buffer_is_operator);
+
+        // Case 3: non-channel buffer (e.g. private query) is never operator
+        controller.active_buffer_type = "private".into();
+        controller.rebuild_nick_model();
+        assert!(!controller.active_buffer_is_operator);
     }
 }
