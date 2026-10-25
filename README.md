@@ -22,6 +22,7 @@ Download the latest executable from the [GitHub Releases](https://github.com/old
 - Rust (latest stable)
 - Qt 6 (Declarative, Quick Controls)
 - C++ build tools (`cmake`, `pkg-config`)
+- `yt-dlp` (optional runtime dependency, enables YouTube video playback in the media viewer)
 
 ```bash
 git clone https://github.com/oldlamps/weechat-qml.git
@@ -51,6 +52,16 @@ The compiled binary will be located at `target/release/weechat-qml`.
 | `Tab` | Nick and command completion |
 | `Ctrl+F` | Search buffer |
 | `Ctrl+Q` | Quit |
+
+## Configuration
+
+Settings and server profiles are stored in:
+
+```text
+~/.config/weechat-qml/config.json
+```
+
+Server passwords are not saved in plaintext; they are stored securely in your system keyring (FreeDesktop Secret Service or KWallet).
 
 ## License
 
