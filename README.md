@@ -2,6 +2,8 @@
 
 WeeChat QML is a fast, native Linux desktop client for WeeChat. It connects to a local or remote WeeChat instance via the Relay protocol, offering a responsive GUI while letting WeeChat manage your IRC connections, bouncers, and logs.
 
+<img width="1576" height="1036" alt="weechat-qml" src="https://github.com/user-attachments/assets/66cb37ad-0a29-4db8-bed8-d5d92e6a8f54" />
+
 ## Highlights
 
 - **Modern & Classic Views**: Toggle between a modern chat layout with inline previews and avatars, or a compact, dense layout for traditional IRC users.
