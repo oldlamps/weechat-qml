@@ -61,3 +61,13 @@ pub struct ServerProfileItem {
     pub is_active: bool,
     pub has_saved_password: bool,
 }
+
+#[derive(SimpleListItem, Default, Clone, Debug, PartialEq)]
+pub struct FilterItem {
+    pub name: QString,
+    pub buffer: QString,
+    pub tags: QString,
+    pub regex: QString,
+    pub enabled: bool,
+}
+

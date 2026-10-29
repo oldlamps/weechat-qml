@@ -485,6 +485,40 @@ Item {
             }
         }
 
+        // Mute / Unmute Nickname Filter
+        MenuItem {
+            id: muteNickItem
+            visible: relayController.is_valid_nick_for_mute(messageContextMenu.senderNick)
+            height: visible ? implicitHeight : 0
+            contentItem: RowLayout {
+                spacing: 8
+                Text {
+                    text: relayController.is_nick_muted(messageContextMenu.senderNick) ? "🔊" : "🔇"
+                    font.pixelSize: 12
+                }
+                Text {
+                    text: relayController.is_nick_muted(messageContextMenu.senderNick)
+                        ? "Unmute " + messageContextMenu.senderNick
+                        : "Mute " + messageContextMenu.senderNick + " (/filter)"
+                    color: muteNickItem.highlighted
+                        ? (relayController.is_nick_muted(messageContextMenu.senderNick) ? theme.accentCyan : theme.badgeHighlight)
+                        : theme.textSecondary
+                    font.family: theme.fontSans
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+            }
+            background: Rectangle {
+                color: muteNickItem.highlighted ? theme.bgHover : "transparent"
+                radius: 4
+            }
+            onTriggered: {
+                if (messageContextMenu.senderNick.length > 0) {
+                    relayController.toggle_mute_nick(messageContextMenu.senderNick)
+                }
+            }
+        }
+
         MenuSeparator {
             contentItem: Rectangle {
                 implicitWidth: parent.width

@@ -203,6 +203,12 @@ ApplicationWindow {
         onActivated: relay.select_next_unread_buffer()
     }
 
+    // Toggle All Filters Shortcut (Classic WeeChat Alt+=)
+    Shortcut {
+        sequence: "Alt+="
+        onActivated: relay.toggle_all_filters()
+    }
+
     // Numbered buffer quick jump shortcuts: Alt+1 through Alt+9
     Shortcut { sequence: "Alt+1"; onActivated: relay.select_buffer_by_number(1) }
     Shortcut { sequence: "Alt+2"; onActivated: relay.select_buffer_by_number(2) }
@@ -255,6 +261,7 @@ ApplicationWindow {
                 onToggleBufferSidebar: rootWindow.showLeftSidebar = !rootWindow.showLeftSidebar
                 onToggleNickSidebar: rootWindow.showRightSidebar = !rootWindow.showRightSidebar
                 onOpenSettingsRequested: settingsDialog.visible = true
+                onFilterManagerRequested: filterManagerModal.visible = true
             }
 
             MessageListView {
@@ -315,6 +322,13 @@ ApplicationWindow {
     // Preferences & Settings Modal
     SettingsDialog {
         id: settingsDialog
+        relayController: relay
+        theme: appTheme
+    }
+
+    // Event & Message Filter Manager Modal
+    FilterManagerModal {
+        id: filterManagerModal
         relayController: relay
         theme: appTheme
     }

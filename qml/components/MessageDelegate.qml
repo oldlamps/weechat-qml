@@ -265,8 +265,23 @@ Item {
 
                         MouseArea {
                             anchors.fill: parent
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: msgRoot.nickClicked(model.prefix_plain)
+                            onClicked: function(mouse) {
+                                if (mouse.button === Qt.RightButton) {
+                                    msgRoot.contextMenuRequested(
+                                        messageBody,
+                                        "",
+                                        model.plain_text,
+                                        model.prefix_plain,
+                                        model.time_str,
+                                        "",
+                                        model.is_action
+                                    )
+                                } else {
+                                    msgRoot.nickClicked(model.prefix_plain)
+                                }
+                            }
                         }
                     }
 
@@ -319,8 +334,23 @@ Item {
 
                             MouseArea {
                                 anchors.fill: parent
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: msgRoot.nickClicked(model.prefix_plain)
+                                onClicked: function(mouse) {
+                                    if (mouse.button === Qt.RightButton) {
+                                        msgRoot.contextMenuRequested(
+                                            messageBody,
+                                            "",
+                                            model.plain_text,
+                                            model.prefix_plain,
+                                            model.time_str,
+                                            "",
+                                            model.is_action
+                                        )
+                                    } else {
+                                        msgRoot.nickClicked(model.prefix_plain)
+                                    }
+                                }
                             }
                         }
 
@@ -1252,10 +1282,23 @@ Item {
 
                     MouseArea {
                         anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
                         cursorShape: (!model.is_system && !model.is_action) ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: {
+                        onClicked: function(mouse) {
                             if (!model.is_system && !model.is_action && model.prefix_plain.length > 0) {
-                                msgRoot.nickClicked(model.prefix_plain)
+                                if (mouse.button === Qt.RightButton) {
+                                    msgRoot.contextMenuRequested(
+                                        classicMessageBody,
+                                        "",
+                                        model.plain_text,
+                                        model.prefix_plain,
+                                        model.time_str,
+                                        "",
+                                        model.is_action
+                                    )
+                                } else {
+                                    msgRoot.nickClicked(model.prefix_plain)
+                                }
                             }
                         }
                     }

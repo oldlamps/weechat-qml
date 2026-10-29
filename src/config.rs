@@ -3,6 +3,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -11,6 +15,8 @@ pub struct AppConfig {
     pub use_tls: bool,
     pub verify_tls: bool,
     pub show_join_part_quit: bool,
+    #[serde(default = "default_true")]
+    pub auto_save_weechat_filters: bool,
     pub show_media_previews: bool,
     pub desktop_notifications: bool,
     pub theme_name: String,
@@ -38,6 +44,7 @@ impl Default for AppConfig {
             use_tls: false,
             verify_tls: true,
             show_join_part_quit: false,
+            auto_save_weechat_filters: true,
             show_media_previews: true,
             desktop_notifications: true,
             theme_name: "Catppuccin Mocha".to_string(),
@@ -162,6 +169,7 @@ mod tests {
             use_tls: true,
             verify_tls: false,
             show_join_part_quit: true,
+            auto_save_weechat_filters: true,
             show_media_previews: false,
             desktop_notifications: false,
             theme_name: "".to_string(),

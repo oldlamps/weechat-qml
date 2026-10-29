@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use pbkdf2::pbkdf2_hmac;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use tokio::sync::mpsc;
 
@@ -58,6 +59,15 @@ pub struct RelayNick {
     pub visible: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayFilter {
+    pub name: String,
+    pub buffer: String,
+    pub tags: String,
+    pub regex: String,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct RelayNickDiff {
@@ -74,6 +84,7 @@ pub enum ClientCommand {
     FetchBufferLines { buffer_ptr: String, count: usize },
     MarkBufferRead { buffer_ptr: String },
     RequestNicklist { buffer_ptr: Option<String> },
+    RequestFilters,
     Ping,
     Disconnect,
 }
@@ -92,6 +103,7 @@ pub enum RelayEvent {
     Error(String),
     BuffersListed(Vec<RelayBuffer>),
     HotlistUpdated(HashMap<String, (i32, i32)>), // buffer_ptr -> (unread_count, highlight_count)
+    FiltersFetched(Vec<RelayFilter>),
     BufferLinesFetched {
         buffer_ptr: String,
         lines: Vec<RelayLine>,
@@ -309,6 +321,7 @@ pub async fn run_relay_session(
         "(hotlist) hdata hotlist:gui_hotlist(*) buffer,count",
     )
     .await?;
+    write_relay_command(&mut stream, "(filters) infolist filter").await?;
     write_relay_command(&mut stream, "(nicklist) nicklist").await?;
     write_relay_command(&mut stream, "sync *").await?;
 
@@ -353,6 +366,9 @@ pub async fn run_relay_session(
                             None => "(nicklist) nicklist".to_string(),
                         };
                         write_relay_command(&mut stream, &wire).await?;
+                    }
+                    ClientCommand::RequestFilters => {
+                        write_relay_command(&mut stream, "(filters) infolist filter").await?;
                     }
                     ClientCommand::Ping => {
                         last_ping_sent = Some(Instant::now());
@@ -420,6 +436,29 @@ async fn handle_incoming_message(
             }
         }
         let _ = event_tx.send(RelayEvent::HotlistUpdated(hotlist_map));
+    } else if id == "filters" || id.starts_with("filters") {
+        let mut filters = Vec::new();
+        for obj in &msg.objects {
+            if let RelayValue::Infolist(inl) = obj {
+                for item in &inl.items {
+                    let name = item.get("name").map(|v| v.as_string_lossy()).unwrap_or_default();
+                    let buffer = item.get("buffer").map(|v| v.as_string_lossy()).unwrap_or_default();
+                    let tags = item.get("tags").map(|v| v.as_string_lossy()).unwrap_or_default();
+                    let regex = item.get("regex").map(|v| v.as_string_lossy()).unwrap_or_default();
+                    let enabled = item.get("enabled").and_then(|v| v.as_i32()).unwrap_or(0) != 0;
+                    if !name.is_empty() {
+                        filters.push(RelayFilter {
+                            name,
+                            buffer,
+                            tags,
+                            regex,
+                            enabled,
+                        });
+                    }
+                }
+            }
+        }
+        let _ = event_tx.send(RelayEvent::FiltersFetched(filters));
     } else if let Some(buf_ptr) = id.strip_prefix("lines:") {
         let norm_buf_ptr = super::types::normalize_ptr(buf_ptr);
         let mut lines = Vec::new();

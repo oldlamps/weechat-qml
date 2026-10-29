@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use chrono::{Local, TimeZone};
+use chrono::{Local, TimeZone, Utc};
 use qmetaobject::*;
 use tokio::sync::mpsc;
 
@@ -11,12 +11,12 @@ use crate::formatting::colors::{
 };
 use crate::formatting::urls::format_weechat_message;
 use crate::relay::client::{
-    ClientCommand, ConnectionConfig, RelayBuffer, RelayEvent, RelayLine, RelayNick,
+    ClientCommand, ConnectionConfig, RelayBuffer, RelayEvent, RelayFilter, RelayLine, RelayNick,
     determine_buffer_type, extract_server_name, extract_short_name, run_relay_session,
 };
 use crate::relay::types::normalize_ptr;
 
-use super::models::{BufferItem, MessageItem, NickItem, ServerProfileItem};
+use super::models::{BufferItem, FilterItem, MessageItem, NickItem, ServerProfileItem};
 use crate::servers::{ServerProfile, ServerStore};
 
 #[derive(QObject)]
@@ -50,6 +50,10 @@ pub struct RelayController {
     pub custom_browser: qt_property!(QString; NOTIFY preferences_changed),
     pub classic_mode: qt_property!(bool; NOTIFY preferences_changed),
     pub alternating_row_colors: qt_property!(bool; NOTIFY preferences_changed),
+    pub auto_save_weechat_filters: qt_property!(bool; NOTIFY preferences_changed),
+    pub active_filter_count: qt_property!(i32; NOTIFY filters_changed),
+    pub filters_global_enabled: qt_property!(bool; NOTIFY filters_changed),
+    pub filter_save_status: qt_property!(QString; NOTIFY filter_save_status_changed),
 
     // Active buffer metadata properties
     pub active_buffer_ptr: qt_property!(QString; NOTIFY active_buffer_changed),
@@ -73,6 +77,7 @@ pub struct RelayController {
     pub message_model: qt_property!(RefCell<SimpleListModel<MessageItem>>; CONST),
     pub nick_model: qt_property!(RefCell<SimpleListModel<NickItem>>; CONST),
     pub server_model: qt_property!(RefCell<SimpleListModel<ServerProfileItem>>; CONST),
+    pub filter_model: qt_property!(RefCell<SimpleListModel<FilterItem>>; CONST),
 
     // Signals
     pub connection_state_changed: qt_signal!(),
@@ -87,6 +92,8 @@ pub struct RelayController {
     pub new_message_arrived: qt_signal!(),
     pub active_server_changed: qt_signal!(),
     pub server_list_changed: qt_signal!(),
+    pub filters_changed: qt_signal!(),
+    pub filter_save_status_changed: qt_signal!(),
 
     // Invokable methods callable from QML
     pub init_controller: qt_method!(fn(&mut self)),
@@ -179,9 +186,27 @@ pub struct RelayController {
     pub should_show_server_manager_on_startup: qt_method!(fn(&self) -> bool),
     pub copy_to_clipboard: qt_method!(fn(&self, text: QString)),
 
+    // WeeChat Server-Side Filters
+    pub request_filters: qt_method!(fn(&mut self)),
+    pub toggle_weechat_filter: qt_method!(fn(&mut self, name: QString)),
+    pub add_weechat_filter: qt_method!(
+        fn(&mut self, name: QString, buffer: QString, tags: QString, regex: QString)
+    ),
+    pub delete_weechat_filter: qt_method!(fn(&mut self, name: QString)),
+    pub toggle_all_filters: qt_method!(fn(&mut self)),
+    pub save_weechat_config: qt_method!(fn(&mut self)),
+    pub toggle_preset_filter: qt_method!(fn(&mut self, preset_id: QString)),
+    pub has_filter: qt_method!(fn(&self, name: QString) -> bool),
+    pub is_filter_enabled: qt_method!(fn(&self, name: QString) -> bool),
+    pub set_auto_save_weechat_filters: qt_method!(fn(&mut self, enabled: bool)),
+    pub is_nick_muted: qt_method!(fn(&self, nick: QString) -> bool),
+    pub is_valid_nick_for_mute: qt_method!(fn(&self, nick: QString) -> bool),
+    pub toggle_mute_nick: qt_method!(fn(&mut self, nick: QString)),
+
     // Internal Rust state
     cmd_tx: Option<mpsc::UnboundedSender<ClientCommand>>,
     buffers_cache: Vec<RelayBuffer>,
+    filters_cache: Vec<RelayFilter>,
     lines_cache: HashMap<String, Vec<RelayLine>>,
     message_items_cache: HashMap<String, Vec<MessageItem>>,
     nicks_cache: HashMap<String, Vec<RelayNick>>,
@@ -191,6 +216,7 @@ pub struct RelayController {
     server_store: ServerStore,
     sidebar_server_order: Vec<String>,
     pub collapsed_servers: HashSet<String>,
+    muted_nicks: HashMap<String, i64>,
 }
 
 pub fn sort_buffers_by_server_and_number(
@@ -336,6 +362,10 @@ impl Default for RelayController {
             custom_browser: QString::default(),
             classic_mode: false,
             alternating_row_colors: true,
+            auto_save_weechat_filters: true,
+            active_filter_count: 0,
+            filters_global_enabled: true,
+            filter_save_status: QString::default(),
             active_buffer_ptr: QString::default(),
             active_buffer_name: QString::default(),
             active_buffer_server: QString::default(),
@@ -353,6 +383,7 @@ impl Default for RelayController {
             message_model: Default::default(),
             nick_model: Default::default(),
             server_model: Default::default(),
+            filter_model: Default::default(),
             connection_state_changed: Default::default(),
             error_message_changed: Default::default(),
             latency_changed: Default::default(),
@@ -365,6 +396,8 @@ impl Default for RelayController {
             new_message_arrived: Default::default(),
             active_server_changed: Default::default(),
             server_list_changed: Default::default(),
+            filters_changed: Default::default(),
+            filter_save_status_changed: Default::default(),
             init_controller: Default::default(),
             connect_to_relay: Default::default(),
             start_demo_mode: Default::default(),
@@ -425,8 +458,22 @@ impl Default for RelayController {
             select_active_server: Default::default(),
             should_show_server_manager_on_startup: Default::default(),
             copy_to_clipboard: Default::default(),
+            request_filters: Default::default(),
+            toggle_weechat_filter: Default::default(),
+            add_weechat_filter: Default::default(),
+            delete_weechat_filter: Default::default(),
+            toggle_all_filters: Default::default(),
+            save_weechat_config: Default::default(),
+            toggle_preset_filter: Default::default(),
+            has_filter: Default::default(),
+            is_filter_enabled: Default::default(),
+            set_auto_save_weechat_filters: Default::default(),
+            is_nick_muted: Default::default(),
+            is_valid_nick_for_mute: Default::default(),
+            toggle_mute_nick: Default::default(),
             cmd_tx: None,
             buffers_cache: Vec::new(),
+            filters_cache: Vec::new(),
             lines_cache: HashMap::new(),
             message_items_cache: HashMap::new(),
             nicks_cache: HashMap::new(),
@@ -436,6 +483,7 @@ impl Default for RelayController {
             server_store: ServerStore::default(),
             sidebar_server_order: Vec::new(),
             collapsed_servers: HashSet::new(),
+            muted_nicks: HashMap::new(),
         };
         let cfg = AppConfig::load();
         controller.apply_config(&cfg);
@@ -450,6 +498,7 @@ impl RelayController {
         self.saved_use_tls = cfg.use_tls;
         self.saved_verify_tls = cfg.verify_tls;
         self.show_join_part_quit = cfg.show_join_part_quit;
+        self.auto_save_weechat_filters = cfg.auto_save_weechat_filters;
         self.show_media_previews = cfg.show_media_previews;
         self.desktop_notifications = cfg.desktop_notifications;
         self.theme_name = cfg.theme_name.clone().into();
@@ -536,6 +585,10 @@ impl RelayController {
         self.message_items_cache.clear();
         self.unread_map.clear();
         self.nicks_cache.clear();
+        self.filters_cache.clear();
+        self.filter_model.borrow_mut().reset_data(Vec::new());
+        self.active_filter_count = 0;
+        self.filters_changed();
 
         let host_str = host.to_string().trim().to_string();
         let port_u16 = (port.clamp(1, 65535)) as u16;
@@ -598,6 +651,10 @@ impl RelayController {
             let _ = tx.send(ClientCommand::Disconnect);
         }
         self.is_demo_mode = false;
+        self.filters_cache.clear();
+        self.filter_model.borrow_mut().reset_data(Vec::new());
+        self.active_filter_count = 0;
+        self.filters_changed();
         self.connection_state = "Disconnected".into();
         self.status_detail = "Disconnected".into();
         self.connection_state_changed();
@@ -722,6 +779,14 @@ impl RelayController {
                 self.unread_map = norm_map;
                 self.rebuild_buffer_model();
             }
+            RelayEvent::FiltersFetched(filters) => {
+                self.filters_cache = filters.clone();
+                self.rebuild_filter_model();
+                self.active_filter_count = filters.iter().filter(|f| f.enabled).count() as i32;
+                self.filters_changed();
+                self.message_items_cache.clear();
+                self.rebuild_message_model();
+            }
             RelayEvent::BufferLinesFetched {
                 buffer_ptr,
                 lines,
@@ -804,13 +869,13 @@ impl RelayController {
                         self.append_single_message_to_model(&line);
                         self.new_message_arrived();
                     } else if self.message_items_cache.contains_key(&buf_ptr) {
-                        let is_join_part = line.tags.iter().any(|t| {
-                            matches!(
-                                t.as_str(),
-                                "irc_join" | "irc_part" | "irc_quit" | "irc_nick" | "irc_smart_filter"
-                            )
-                        });
-                        if !is_join_part || self.show_join_part_quit {
+                        let buf_full_name = self
+                            .buffers_cache
+                            .iter()
+                            .find(|b| b.ptr == buf_ptr)
+                            .map(|b| b.full_name.clone())
+                            .unwrap_or_default();
+                        if !self.is_line_filtered(&line, &buf_full_name) {
                             let (mut prev_sender, mut prev_ts, mut prev_date_str) = {
                                 let cached = self.message_items_cache.get(&buf_ptr).unwrap();
                                 let mut s = String::new();
@@ -1273,6 +1338,430 @@ impl RelayController {
         crate::copy_to_clipboard(&text.to_string());
     }
 
+    // --- WeeChat Server-Side Filters ---
+
+    pub fn rebuild_filter_model(&mut self) {
+        let items: Vec<FilterItem> = self
+            .filters_cache
+            .iter()
+            .map(|f| FilterItem {
+                name: f.name.clone().into(),
+                buffer: f.buffer.clone().into(),
+                tags: f.tags.clone().into(),
+                regex: f.regex.clone().into(),
+                enabled: f.enabled,
+            })
+            .collect();
+        self.filter_model.borrow_mut().reset_data(items);
+    }
+
+    pub fn request_filters(&mut self) {
+        if let Some(tx) = &self.cmd_tx {
+            let _ = tx.send(ClientCommand::RequestFilters);
+        }
+    }
+
+    pub fn toggle_weechat_filter(&mut self, name: QString) {
+        let name_str = name.to_string();
+        if name_str.is_empty() {
+            return;
+        }
+        if let Some(idx) = self
+            .filters_cache
+            .iter()
+            .position(|f| f.name.eq_ignore_ascii_case(&name_str))
+        {
+            self.filters_cache[idx].enabled = !self.filters_cache[idx].enabled;
+            self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+            self.rebuild_filter_model();
+            self.filters_changed();
+        }
+        self.send_input(format!("/filter toggle {}", name_str).into());
+        if self.auto_save_weechat_filters {
+            self.send_input("/save".into());
+            self.filter_save_status = "Saved to WeeChat!".into();
+            self.filter_save_status_changed();
+        }
+        self.message_items_cache.clear();
+        self.rebuild_message_model();
+        self.refetch_active_buffer_backlog();
+    }
+
+    pub fn add_weechat_filter(
+        &mut self,
+        name: QString,
+        buffer: QString,
+        tags: QString,
+        regex: QString,
+    ) {
+        let n = name.to_string().trim().to_string();
+        let b = buffer.to_string().trim().to_string();
+        let t = tags.to_string().trim().to_string();
+        let r = regex.to_string().trim().to_string();
+        if n.is_empty() {
+            return;
+        }
+        let b = if b.is_empty() { "*".to_string() } else { b };
+        let t = if t.is_empty() { "*".to_string() } else { t };
+        let r = if r.is_empty() { "*".to_string() } else { r };
+
+        if let Some(existing) = self
+            .filters_cache
+            .iter_mut()
+            .find(|f| f.name.eq_ignore_ascii_case(&n))
+        {
+            existing.buffer = b.clone();
+            existing.tags = t.clone();
+            existing.regex = r.clone();
+            existing.enabled = true;
+        } else {
+            self.filters_cache.push(RelayFilter {
+                name: n.clone(),
+                buffer: b.clone(),
+                tags: t.clone(),
+                regex: r.clone(),
+                enabled: true,
+            });
+        }
+        self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+        self.rebuild_filter_model();
+        self.filters_changed();
+
+        self.send_input(format!("/filter add {} {} {} {}", n, b, t, r).into());
+        if self.auto_save_weechat_filters {
+            self.send_input("/save".into());
+            self.filter_save_status = "Saved to WeeChat!".into();
+            self.filter_save_status_changed();
+        }
+        self.message_items_cache.clear();
+        self.rebuild_message_model();
+        self.refetch_active_buffer_backlog();
+    }
+
+    pub fn delete_weechat_filter(&mut self, name: QString) {
+        let name_str = name.to_string();
+        if name_str.is_empty() {
+            return;
+        }
+        self.filters_cache.retain(|f| !f.name.eq_ignore_ascii_case(&name_str));
+        self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+        self.rebuild_filter_model();
+        self.filters_changed();
+
+        self.send_input(format!("/filter del {}", name_str).into());
+        if self.auto_save_weechat_filters {
+            self.send_input("/save".into());
+            self.filter_save_status = "Saved to WeeChat!".into();
+            self.filter_save_status_changed();
+        }
+        self.message_items_cache.clear();
+        self.rebuild_message_model();
+        self.refetch_active_buffer_backlog();
+    }
+
+    pub fn toggle_all_filters(&mut self) {
+        self.filters_global_enabled = !self.filters_global_enabled;
+        self.send_input("/filter toggle".into());
+        self.request_filters();
+        self.filters_changed();
+        self.message_items_cache.clear();
+        self.rebuild_message_model();
+        self.refetch_active_buffer_backlog();
+    }
+
+    pub fn save_weechat_config(&mut self) {
+        self.send_input("/save".into());
+        self.filter_save_status = "Saved to WeeChat!".into();
+        self.filter_save_status_changed();
+    }
+
+    pub fn toggle_preset_filter(&mut self, preset_id: QString) {
+        let id_str = preset_id.to_string();
+        let (name, buffer, tags, regex, is_smart_filter) = match id_str.as_str() {
+            "smart_filter" => ("irc_smart_filter", "*", "irc_smart_filter", "*", true),
+            "join_part_quit" => ("join_part_quit", "*", "irc_join,irc_part,irc_quit", "*", false),
+            "nick_changes" => ("nick_changes", "*", "irc_nick", "*", false),
+            "channel_modes" => ("channel_modes", "*", "irc_mode", "*", false),
+            "topic_changes" => ("topic_changes", "*", "irc_topic", "*", false),
+            "service_bots" => ("service_bots", "*", "nick_chanserv,nick_nickserv", "*", false),
+            _ => return,
+        };
+
+        if is_smart_filter {
+            self.send_input("/set irc.look.smart_filter on".into());
+        }
+
+        let existing_idx = self
+            .filters_cache
+            .iter()
+            .position(|f| f.name.eq_ignore_ascii_case(name));
+
+        if let Some(idx) = existing_idx {
+            self.filters_cache[idx].enabled = !self.filters_cache[idx].enabled;
+            let filter_name = self.filters_cache[idx].name.clone();
+            self.send_input(format!("/filter toggle {}", filter_name).into());
+        } else {
+            self.filters_cache.push(RelayFilter {
+                name: name.to_string(),
+                buffer: buffer.to_string(),
+                tags: tags.to_string(),
+                regex: regex.to_string(),
+                enabled: true,
+            });
+            self.send_input(format!("/filter add {} {} {} {}", name, buffer, tags, regex).into());
+        }
+
+        self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+        self.rebuild_filter_model();
+        self.filters_changed();
+
+        if self.auto_save_weechat_filters {
+            self.send_input("/save".into());
+            self.filter_save_status = "Saved to WeeChat!".into();
+            self.filter_save_status_changed();
+        }
+
+        self.message_items_cache.clear();
+        self.rebuild_message_model();
+        self.refetch_active_buffer_backlog();
+    }
+
+    pub fn has_filter(&self, name: QString) -> bool {
+        let n = name.to_string();
+        self.filters_cache.iter().any(|f| f.name.eq_ignore_ascii_case(&n))
+    }
+
+    pub fn is_filter_enabled(&self, name: QString) -> bool {
+        let n = name.to_string();
+        self.filters_cache
+            .iter()
+            .find(|f| f.name.eq_ignore_ascii_case(&n))
+            .map(|f| f.enabled)
+            .unwrap_or(false)
+    }
+
+    pub fn set_auto_save_weechat_filters(&mut self, enabled: bool) {
+        self.auto_save_weechat_filters = enabled;
+        let mut cfg = AppConfig::load();
+        cfg.auto_save_weechat_filters = enabled;
+        cfg.save();
+        self.preferences_changed();
+    }
+
+    pub fn is_valid_nick_for_mute(&self, nick: QString) -> bool {
+        is_valid_nick_for_mute_str(&nick.to_string())
+    }
+
+    pub fn is_nick_muted(&self, nick: QString) -> bool {
+        let clean = clean_nickname_for_filter(&nick.to_string());
+        if clean.is_empty() {
+            return false;
+        }
+        let clean_lower = clean.to_lowercase();
+        let filter_name = mute_filter_name(&clean);
+        let tag_match = format!("nick_{}", clean);
+        let tag_match_lower = format!("nick_{}", clean_lower);
+
+        self.muted_nicks.contains_key(&clean_lower)
+            || self.filters_cache.iter().any(|f| {
+                f.enabled
+                    && (f.name.eq_ignore_ascii_case(&filter_name)
+                        || f.tags.split(',').any(|t| {
+                            let t = t.trim();
+                            t.eq_ignore_ascii_case(&tag_match)
+                                || t.eq_ignore_ascii_case(&tag_match_lower)
+                        }))
+            })
+    }
+
+    pub fn toggle_mute_nick(&mut self, nick: QString) {
+        let clean = clean_nickname_for_filter(&nick.to_string());
+        if clean.is_empty() {
+            return;
+        }
+        let clean_lower = clean.to_lowercase();
+        let filter_name = mute_filter_name(&clean);
+        let tag_match = format!("nick_{}", clean);
+        let tag_match_lower = format!("nick_{}", clean_lower);
+
+        let is_currently_muted = self.is_nick_muted(nick);
+
+        if is_currently_muted {
+            self.muted_nicks.remove(&clean_lower);
+            if let Some(idx) = self.filters_cache.iter().position(|f| {
+                f.name.eq_ignore_ascii_case(&filter_name)
+                    || f.tags.split(',').any(|t| {
+                        let t = t.trim();
+                        t.eq_ignore_ascii_case(&tag_match) || t.eq_ignore_ascii_case(&tag_match_lower)
+                    })
+            }) {
+                self.filters_cache[idx].enabled = false;
+                let name_to_toggle = self.filters_cache[idx].name.clone();
+                self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+                self.rebuild_filter_model();
+                self.filters_changed();
+                self.send_input(format!("/filter toggle {}", name_to_toggle).into());
+                if self.auto_save_weechat_filters {
+                    self.send_input("/save".into());
+                    self.filter_save_status = "Saved to WeeChat!".into();
+                    self.filter_save_status_changed();
+                }
+            }
+        } else {
+            // Mute going forward: track the timestamp so past messages are kept visible
+            let now = Utc::now().timestamp();
+            self.muted_nicks.insert(clean_lower.clone(), now);
+
+            let existing_idx = self.filters_cache.iter().position(|f| {
+                f.name.eq_ignore_ascii_case(&filter_name)
+                    || f.tags.split(',').any(|t| {
+                        let t = t.trim();
+                        t.eq_ignore_ascii_case(&tag_match) || t.eq_ignore_ascii_case(&tag_match_lower)
+                    })
+            });
+
+            if let Some(idx) = existing_idx {
+                self.filters_cache[idx].enabled = true;
+                let name_to_toggle = self.filters_cache[idx].name.clone();
+                self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+                self.rebuild_filter_model();
+                self.filters_changed();
+                self.send_input(format!("/filter toggle {}", name_to_toggle).into());
+            } else {
+                let tags = if clean.eq_ignore_ascii_case(&clean_lower) {
+                    format!("nick_{}", clean_lower)
+                } else {
+                    format!("nick_{},nick_{}", clean, clean_lower)
+                };
+                self.filters_cache.push(RelayFilter {
+                    name: filter_name.clone(),
+                    buffer: "*".to_string(),
+                    tags: tags.clone(),
+                    regex: "*".to_string(),
+                    enabled: true,
+                });
+                self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+                self.rebuild_filter_model();
+                self.filters_changed();
+                self.send_input(format!("/filter add {} * {} *", filter_name, tags).into());
+            }
+
+            if self.auto_save_weechat_filters {
+                self.send_input("/save".into());
+                self.filter_save_status = "Saved to WeeChat!".into();
+                self.filter_save_status_changed();
+            }
+        }
+        // Note: We intentionally do NOT clear message_items_cache, do NOT rebuild message_model,
+        // and do NOT refetch backlog. Muting applies strictly to new messages going forward.
+    }
+
+    fn refetch_active_buffer_backlog(&self) {
+        let active = normalize_ptr(&self.active_buffer_ptr.to_string());
+        if let (false, Some(tx)) = (active.is_empty(), &self.cmd_tx) {
+            let count = self.initial_lines_fetch.clamp(50, 1000) as usize;
+            let _ = tx.send(ClientCommand::FetchBufferLines {
+                buffer_ptr: active,
+                count,
+            });
+        }
+    }
+
+    fn is_line_filtered(&self, line: &RelayLine, buf_full_name: &str) -> bool {
+        if !self.filters_global_enabled {
+            return false;
+        }
+        if !line.displayed {
+            return true;
+        }
+        let is_join_part = line.tags.iter().any(|t| {
+            matches!(
+                t.as_str(),
+                "irc_join" | "irc_part" | "irc_quit" | "irc_nick" | "irc_smart_filter"
+            )
+        });
+        if is_join_part && !self.show_join_part_quit {
+            return true;
+        }
+
+        for filter in &self.filters_cache {
+            if !filter.enabled {
+                continue;
+            }
+            if filter.buffer != "*" && !buf_full_name.is_empty() {
+                if filter.buffer.ends_with('*') {
+                    let prefix = &filter.buffer[..filter.buffer.len() - 1];
+                    if !buf_full_name.starts_with(prefix) {
+                        continue;
+                    }
+                } else if filter.buffer != buf_full_name {
+                    continue;
+                }
+            }
+
+            let filter_tags: Vec<&str> = filter
+                .tags
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            if filter_tags.is_empty() || filter.tags == "*" {
+                if filter.regex == "*" || filter.regex.is_empty() {
+                    return true;
+                }
+                let pat = filter.regex.to_lowercase();
+                if line.message.to_lowercase().contains(&pat)
+                    || line.prefix.to_lowercase().contains(&pat)
+                {
+                    return true;
+                }
+            } else {
+                let matches_tag = filter_tags.iter().any(|ft| {
+                    if ft.contains('+') {
+                        ft.split('+')
+                            .all(|part| line.tags.iter().any(|lt| lt.eq_ignore_ascii_case(part)))
+                    } else if let Some(neg) = ft.strip_prefix('!') {
+                        !line.tags.iter().any(|lt| lt.eq_ignore_ascii_case(neg))
+                    } else {
+                        let is_nick_tag = ft.starts_with("nick_");
+                        let tag_matches = line.tags.iter().any(|lt| lt.eq_ignore_ascii_case(ft))
+                            || (is_nick_tag
+                                && clean_nickname_for_filter(&strip_weechat_formatting(&line.prefix))
+                                    .eq_ignore_ascii_case(&ft["nick_".len()..]));
+
+                        if tag_matches && (is_nick_tag || filter.name.starts_with("mute_")) {
+                            let nick_key = if is_nick_tag {
+                                ft["nick_".len()..].to_lowercase()
+                            } else {
+                                filter.name["mute_".len()..].to_lowercase()
+                            };
+                            if let Some(&muted_since) = self.muted_nicks.get(&nick_key) {
+                                // Mute going forward: historical messages prior to the mute timestamp stay visible!
+                                if line.timestamp > 0 && line.timestamp < muted_since {
+                                    return false;
+                                }
+                            }
+                        }
+                        tag_matches
+                    }
+                });
+                if matches_tag {
+                    if filter.regex == "*" || filter.regex.is_empty() {
+                        return true;
+                    }
+                    let pat = filter.regex.to_lowercase();
+                    if line.message.to_lowercase().contains(&pat)
+                        || line.prefix.to_lowercase().contains(&pat)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     fn rebuild_server_model(&mut self) {
         let active_id = self.server_store.active_server_id.as_deref().unwrap_or("");
         let items: Vec<ServerProfileItem> = self
@@ -1544,13 +2033,18 @@ impl RelayController {
             return;
         }
         let active_ptr = normalize_ptr(&self.active_buffer_ptr.to_string());
-        if active_ptr.is_empty() || active_ptr == "0x0" {
-            return;
-        }
+        let target_buf = if active_ptr.is_empty() || active_ptr == "0x0" {
+            self.buffers_cache
+                .first()
+                .map(|b| b.ptr.clone())
+                .unwrap_or_else(|| "core.weechat".to_string())
+        } else {
+            active_ptr
+        };
 
         if let Some(tx) = &self.cmd_tx {
             let _ = tx.send(ClientCommand::SendInput {
-                buffer_ptr: active_ptr,
+                buffer_ptr: target_buf,
                 text: raw,
             });
         }
@@ -2035,6 +2529,13 @@ impl RelayController {
             return Vec::new();
         };
 
+        let buf_full_name = self
+            .buffers_cache
+            .iter()
+            .find(|b| b.ptr == norm_ptr)
+            .map(|b| b.full_name.clone())
+            .unwrap_or_default();
+
         let mut items = Vec::with_capacity(raw_lines.len());
         let mut prev_sender = String::new();
         let mut prev_ts: i64 = 0;
@@ -2042,13 +2543,7 @@ impl RelayController {
         let mut match_count = 0;
 
         for line in raw_lines {
-            let is_join_part = line.tags.iter().any(|t| {
-                matches!(
-                    t.as_str(),
-                    "irc_join" | "irc_part" | "irc_quit" | "irc_nick" | "irc_smart_filter"
-                )
-            });
-            if is_join_part && !self.show_join_part_quit {
+            if self.is_line_filtered(line, &buf_full_name) {
                 continue;
             }
 
@@ -2066,13 +2561,14 @@ impl RelayController {
     }
 
     fn append_single_message_to_model(&mut self, line: &RelayLine) {
-        let is_join_part = line.tags.iter().any(|t| {
-            matches!(
-                t.as_str(),
-                "irc_join" | "irc_part" | "irc_quit" | "irc_nick" | "irc_smart_filter"
-            )
-        });
-        if is_join_part && !self.show_join_part_quit {
+        let buf_full_name = self
+            .buffers_cache
+            .iter()
+            .find(|b| b.ptr == line.buffer_ptr)
+            .map(|b| b.full_name.clone())
+            .unwrap_or_default();
+
+        if self.is_line_filtered(line, &buf_full_name) {
             return;
         }
 
@@ -2311,6 +2807,7 @@ impl RelayController {
             use_tls: self.saved_use_tls,
             verify_tls: self.saved_verify_tls,
             show_join_part_quit: self.show_join_part_quit,
+            auto_save_weechat_filters: self.auto_save_weechat_filters,
             show_media_previews: self.show_media_previews,
             desktop_notifications: self.desktop_notifications,
             theme_name: self.theme_name.to_string(),
@@ -2435,6 +2932,35 @@ impl RelayController {
     }
 
     pub fn start_demo_mode(&mut self) {}
+}
+
+pub fn clean_nickname_for_filter(nick: &str) -> String {
+    let trimmed = nick.trim();
+    let stripped = trimmed.trim_start_matches(['@', '+', '%', '~', '&', '!', '*', '<', '>']);
+    stripped.trim_end_matches('>').trim().to_string()
+}
+
+pub fn is_valid_nick_for_mute_str(nick: &str) -> bool {
+    let clean = clean_nickname_for_filter(nick);
+    !clean.is_empty()
+        && !matches!(
+            clean.as_str(),
+            "--" | "<--" | "-->" | "=!=" | "irc" | "weechat" | "*" | "chan" | "server"
+        )
+}
+
+pub fn mute_filter_name(clean_nick: &str) -> String {
+    let sanitized: String = clean_nick
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("mute_{}", sanitized.to_ascii_lowercase())
 }
 
 fn nick_role_rank(prefix: &str, group_name: &str) -> i32 {

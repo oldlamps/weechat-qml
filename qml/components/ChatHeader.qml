@@ -16,6 +16,7 @@ Rectangle {
     signal toggleBufferSidebar()
     signal toggleNickSidebar()
     signal openSettingsRequested()
+    signal filterManagerRequested()
 
     ColumnLayout {
         anchors.fill: parent
@@ -211,27 +212,56 @@ Rectangle {
                 }
             }
 
-            // Join/Part/Quit Filter Pill Toggle
+            // Event & Message Filter Manager Pill / Button
             Rectangle {
                 height: 28
-                implicitWidth: jpqLabel.implicitWidth + 16
+                implicitWidth: filterBtnContent.implicitWidth + 18
                 radius: 6
-                color: relayController.show_join_part_quit ? theme.bgActive : (jpqHover.hovered ? theme.bgHover : theme.bgElevated)
-                border.color: relayController.show_join_part_quit ? theme.accentPrimary : theme.borderSubtle
+                color: (relayController.active_filter_count > 0 && relayController.filters_global_enabled)
+                    ? Qt.alpha(theme.accentCyan, 0.18)
+                    : (filterHover.hovered ? theme.bgHover : theme.bgElevated)
+                border.color: (relayController.active_filter_count > 0 && relayController.filters_global_enabled)
+                    ? theme.accentCyan
+                    : theme.borderSubtle
 
-                Text {
-                    id: jpqLabel
+                RowLayout {
+                    id: filterBtnContent
                     anchors.centerIn: parent
-                    text: relayController.show_join_part_quit ? "Events: Shown" : "Events: Filtered"
-                    color: relayController.show_join_part_quit ? theme.textPrimary : theme.textSecondary
-                    font.pixelSize: 11
+                    spacing: 5
+
+                    Text {
+                        text: "⛯"
+                        color: (relayController.active_filter_count > 0 && relayController.filters_global_enabled)
+                            ? theme.accentCyan
+                            : theme.textSecondary
+                        font.pixelSize: 11
+                    }
+
+                    Text {
+                        text: !relayController.filters_global_enabled
+                            ? "Filters: Bypassed"
+                            : (relayController.active_filter_count > 0
+                                ? "Filters: " + relayController.active_filter_count + " on"
+                                : "Filters: Off")
+                        color: (relayController.active_filter_count > 0 && relayController.filters_global_enabled)
+                            ? theme.textPrimary
+                            : theme.textSecondary
+                        font.pixelSize: 11
+                    }
                 }
 
-                HoverHandler { id: jpqHover }
+                HoverHandler { id: filterHover }
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: relayController.toggle_join_part_quit()
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: function(mouse) {
+                        if (mouse.button === Qt.RightButton) {
+                            relayController.toggle_all_filters()
+                        } else {
+                            headerBar.filterManagerRequested()
+                        }
+                    }
                 }
             }
 

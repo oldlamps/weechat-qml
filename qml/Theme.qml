@@ -459,6 +459,12 @@ QtObject {
     readonly property color statusWarning: currentThemeData.statusWarning
     readonly property color statusError: currentThemeData.statusError
 
+    // Compatibility & Convenience Aliases
+    readonly property color bgCard: bgSecondary
+    readonly property color accentGreen: statusOnline
+    readonly property color accentRed: statusError
+    readonly property color accentYellow: statusWarning
+
     // Whether active theme is dark or light
     readonly property bool isDark: currentThemeData.isDark !== undefined ? currentThemeData.isDark : true
 

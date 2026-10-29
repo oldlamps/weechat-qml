@@ -769,6 +769,43 @@ Rectangle {
                             }
                         }
 
+                        // Auto-Save WeeChat Filters on Change (/save)
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 48
+                            radius: 8
+                            color: autoSaveFilterHover.hovered ? theme.bgHover : theme.bgSecondary
+                            border.color: theme.borderSubtle
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                spacing: 12
+
+                                Text {
+                                    text: "Auto-save WeeChat Filters on Change (/save)"
+                                    color: theme.textPrimary
+                                    font.pixelSize: 13
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    elide: Text.ElideRight
+                                }
+
+                                Switch {
+                                    id: autoSaveFilterSwitch
+                                    checked: relayController.auto_save_weechat_filters
+                                }
+                            }
+
+                            HoverHandler { id: autoSaveFilterHover }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: relayController.set_auto_save_weechat_filters(!relayController.auto_save_weechat_filters)
+                            }
+                        }
+
                         // Auto Reconnect Toggle
                         Rectangle {
                             Layout.fillWidth: true
