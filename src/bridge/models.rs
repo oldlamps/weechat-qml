@@ -70,4 +70,3 @@ pub struct FilterItem {
     pub regex: QString,
     pub enabled: bool,
 }
-

@@ -5,7 +5,7 @@ import QtQuick.Layouts
 Rectangle {
     id: filterModal
     anchors.fill: parent
-    color: Qt.rgba(0, 0, 0, 0.70)
+    color: "#cc090b10"
     visible: false
     z: 110
 
@@ -80,163 +80,40 @@ Rectangle {
         onTriggered: filterModal.saveNoticeActive = false
     }
 
-    // Modern Switch Component (100% responsive, instant feedback, no snap-back)
+    // Modern Switch Component (responsive, smooth animation, no snap-back)
     component ModernSwitch: Rectangle {
         id: swRoot
         property bool checked: false
         signal toggled(bool newState)
 
-        width: 44
-        height: 24
-        radius: 12
-        color: checked ? theme.accentPrimary : theme.bgElevated
+        width: 40
+        height: 22
+        radius: 11
+        color: checked ? theme.accentPrimary : theme.bgInput
         border.color: checked ? theme.accentPrimary : theme.borderSubtle
         border.width: 1
 
-        Behavior on color { ColorAnimation { duration: 150 } }
-        Behavior on border.color { ColorAnimation { duration: 150 } }
+        Behavior on color { ColorAnimation { duration: 140 } }
+        Behavior on border.color { ColorAnimation { duration: 140 } }
 
         Rectangle {
             id: swThumb
-            width: 18
-            height: 18
-            radius: 9
+            width: 16
+            height: 16
+            radius: 8
             anchors.verticalCenter: parent.verticalCenter
             x: swRoot.checked ? (swRoot.width - width - 3) : 3
             color: swRoot.checked ? theme.bgPrimary : theme.textSecondary
 
-            Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutQuad } }
-            Behavior on color { ColorAnimation { duration: 150 } }
+            Behavior on x { NumberAnimation { duration: 140; easing.type: Easing.OutQuad } }
+            Behavior on color { ColorAnimation { duration: 140 } }
         }
 
         HoverHandler { id: swHover }
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                swRoot.toggled(!swRoot.checked)
-            }
-        }
-    }
-
-    // Inline Preset Card Helper Component (TEMPLATE CARD with Add / Installed button, NO SWITCH)
-    component FilterTemplateCard: Rectangle {
-        id: templateCardRoot
-        property var theme
-        property string iconText: ""
-        property string title: ""
-        property string description: ""
-        property string presetKey: ""
-        property string filterName: ""
-        property string tagsSummary: ""
-        property bool isInstalled: false
-        signal addRequested()
-        signal viewRequested()
-
-        height: 106
-        radius: 11
-        color: isInstalled
-            ? Qt.alpha(theme.accentPrimary, 0.08)
-            : (cardHover.hovered ? theme.bgHover : theme.bgSecondary)
-        border.color: isInstalled
-            ? Qt.alpha(theme.accentPrimary, 0.40)
-            : (cardHover.hovered ? theme.borderFocus : theme.borderSubtle)
-        border.width: 1
-
-        HoverHandler { id: cardHover }
-
-        RowLayout {
-            anchors.fill: parent
-            anchors.margins: 16
-            spacing: 14
-
-            Rectangle {
-                width: 42
-                height: 42
-                radius: 10
-                color: isInstalled ? Qt.alpha(theme.accentPrimary, 0.22) : theme.bgElevated
-
-                Text {
-                    anchors.centerIn: parent
-                    text: iconText
-                    font.pixelSize: 20
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 3
-
-                Text {
-                    text: title
-                    color: theme.textPrimary
-                    font.pixelSize: 13
-                    font.bold: true
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-
-                Text {
-                    text: description
-                    color: theme.textSecondary
-                    font.pixelSize: 11
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
-                }
-
-                Text {
-                    text: "tags: " + tagsSummary
-                    color: theme.textMuted
-                    font.pixelSize: 10
-                    font.family: theme.fontMono
-                }
-            }
-
-            // Action Button: Clear "Added to Filters" or "Add Preset"
-            Rectangle {
-                height: 34
-                radius: 7
-                implicitWidth: actionBtnTxt.implicitWidth + 24
-                color: isInstalled
-                    ? theme.bgElevated
-                    : (actHover.hovered ? theme.accentHover : theme.accentPrimary)
-                border.color: isInstalled ? theme.borderSubtle : theme.accentPrimary
-
-                RowLayout {
-                    anchors.centerIn: parent
-                    spacing: 6
-
-                    Text {
-                        text: isInstalled ? "✓" : "+"
-                        color: isInstalled ? theme.statusOnline : theme.bgPrimary
-                        font.bold: true
-                        font.pixelSize: 12
-                    }
-
-                    Text {
-                        id: actionBtnTxt
-                        text: isInstalled ? "Added to Filters" : "Add Preset"
-                        color: isInstalled ? theme.textPrimary : theme.bgPrimary
-                        font.pixelSize: 11
-                        font.bold: true
-                    }
-                }
-
-                HoverHandler { id: actHover }
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (isInstalled) {
-                            templateCardRoot.viewRequested()
-                        } else {
-                            templateCardRoot.addRequested()
-                        }
-                    }
-                }
-            }
+            onClicked: swRoot.toggled(!swRoot.checked)
         }
     }
 
@@ -247,11 +124,12 @@ Rectangle {
         property var targetInput
         property var theme
 
-        height: 28
-        radius: 7
+        height: 26
+        radius: 13
         implicitWidth: chipTxt.implicitWidth + 16
         color: chipHover.hovered ? theme.bgHover : theme.bgElevated
-        border.color: theme.borderSubtle
+        border.color: chipHover.hovered ? theme.accentCyan : theme.borderSubtle
+        border.width: 1
 
         Text {
             id: chipTxt
@@ -281,6 +159,177 @@ Rectangle {
         }
     }
 
+    // Preset Template Card Component
+    component FilterTemplateCard: Rectangle {
+        id: templateCardRoot
+        property var theme
+        property string iconText: ""
+        property string title: ""
+        property string description: ""
+        property string presetKey: ""
+        property string filterName: ""
+        property string tagsSummary: ""
+        property bool isInstalled: false
+        property bool isActive: false
+        signal toggled()
+        signal viewRequested()
+
+        Layout.fillWidth: true
+        height: 104
+        radius: 10
+        color: isInstalled && isActive
+            ? Qt.alpha(theme.accentPrimary, 0.08)
+            : (cardHover.hovered ? theme.bgHover : theme.bgSecondary)
+        border.color: isInstalled && isActive
+            ? Qt.alpha(theme.accentPrimary, 0.40)
+            : (cardHover.hovered ? theme.borderFocus : theme.borderSubtle)
+        border.width: 1
+
+        HoverHandler { id: cardHover }
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: 14
+            spacing: 12
+
+            Rectangle {
+                width: 38
+                height: 38
+                radius: 9
+                color: isInstalled && isActive ? Qt.alpha(theme.accentPrimary, 0.20) : theme.bgElevated
+
+                Text {
+                    anchors.centerIn: parent
+                    text: iconText
+                    font.pixelSize: 18
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 3
+
+                RowLayout {
+                    spacing: 8
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: title
+                        color: theme.textPrimary
+                        font.pixelSize: 13
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+
+                    Rectangle {
+                        height: 18
+                        radius: 4
+                        visible: isInstalled
+                        implicitWidth: presetStatusTxt.implicitWidth + 8
+                        color: isActive ? Qt.alpha(theme.statusOnline, 0.15) : Qt.alpha(theme.textMuted, 0.15)
+                        border.color: isActive ? Qt.alpha(theme.statusOnline, 0.5) : theme.borderSubtle
+                        border.width: 1
+
+                        Text {
+                            id: presetStatusTxt
+                            anchors.centerIn: parent
+                            text: isActive ? "Active" : "Paused"
+                            color: isActive ? theme.statusOnline : theme.textMuted
+                            font.pixelSize: 10
+                            font.bold: true
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+                }
+
+                Text {
+                    text: description
+                    color: theme.textSecondary
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+
+                RowLayout {
+                    spacing: 8
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Tags: " + tagsSummary
+                        color: theme.textMuted
+                        font.pixelSize: 10
+                        font.family: theme.fontMono
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        text: "View rule →"
+                        color: theme.accentCyan
+                        font.pixelSize: 10
+                        font.bold: true
+                        visible: isInstalled
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: templateCardRoot.viewRequested()
+                        }
+                    }
+                }
+            }
+
+            // Action: Toggle switch if installed, or "+ Add" button if not installed
+            Item {
+                width: isInstalled ? 40 : (addBtnTxt.implicitWidth + 20)
+                height: 30
+
+                ModernSwitch {
+                    anchors.centerIn: parent
+                    visible: isInstalled
+                    checked: isActive
+                    onToggled: templateCardRoot.toggled()
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    visible: !isInstalled
+                    radius: 6
+                    color: addPresetHover.hovered ? theme.accentHover : theme.accentPrimary
+
+                    RowLayout {
+                        anchors.centerIn: parent
+                        spacing: 4
+
+                        Text {
+                            text: "+"
+                            color: theme.bgPrimary
+                            font.bold: true
+                            font.pixelSize: 12
+                        }
+
+                        Text {
+                            id: addBtnTxt
+                            text: "Add"
+                            color: theme.bgPrimary
+                            font.pixelSize: 11
+                            font.bold: true
+                        }
+                    }
+
+                    HoverHandler { id: addPresetHover }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: templateCardRoot.toggled()
+                    }
+                }
+            }
+        }
+    }
+
     MouseArea {
         anchors.fill: parent
         onClicked: filterModal.visible = false
@@ -288,10 +337,10 @@ Rectangle {
 
     Rectangle {
         id: card
-        width: Math.min(parent.width - 64, 860)
-        height: Math.min(parent.height - 64, 760)
+        width: Math.min(parent.width - 64, 820)
+        height: Math.min(parent.height - 64, 700)
         anchors.centerIn: parent
-        radius: 16
+        radius: 14
         color: theme.bgElevated
         border.color: theme.borderSubtle
         border.width: 1
@@ -305,10 +354,10 @@ Rectangle {
             id: closeBtn
             anchors.top: parent.top
             anchors.right: parent.right
-            anchors.topMargin: 18
-            anchors.rightMargin: 18
-            width: 34
-            height: 34
+            anchors.topMargin: 16
+            anchors.rightMargin: 16
+            width: 32
+            height: 32
             radius: 8
             z: 20
             color: closeHover.hovered ? theme.bgHover : "transparent"
@@ -317,7 +366,7 @@ Rectangle {
                 anchors.centerIn: parent
                 text: "✕"
                 color: closeHover.hovered ? theme.textPrimary : theme.textSecondary
-                font.pixelSize: 15
+                font.pixelSize: 14
                 font.bold: true
             }
 
@@ -331,54 +380,52 @@ Rectangle {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.leftMargin: 28
-            anchors.rightMargin: 28
-            anchors.topMargin: 24
-            anchors.bottomMargin: 24
-            spacing: 16
+            anchors.leftMargin: 24
+            anchors.rightMargin: 24
+            anchors.topMargin: 20
+            anchors.bottomMargin: 20
+            spacing: 14
 
             // Header Row
             RowLayout {
                 Layout.fillWidth: true
-                Layout.rightMargin: 40
-                spacing: 16
+                Layout.rightMargin: 36
+                spacing: 14
 
                 Rectangle {
-                    width: 42
-                    height: 42
-                    radius: 11
-                    color: Qt.alpha(theme.accentCyan, 0.22)
-                    border.color: theme.accentCyan
-                    border.width: 1
+                    width: 38
+                    height: 38
+                    radius: 10
+                    color: theme.accentPrimary
 
                     Text {
                         anchors.centerIn: parent
-                        text: "⛯"
-                        color: theme.accentCyan
-                        font.pixelSize: 22
-                        font.bold: true
+                        text: "🛡️"
+                        font.pixelSize: 18
                     }
                 }
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: 3
 
                     RowLayout {
                         spacing: 10
                         Text {
-                            text: "Event & Message Filters"
+                            text: "Message Filters"
                             color: theme.textPrimary
-                            font.pixelSize: 19
+                            font.pixelSize: 18
                             font.bold: true
+                            font.family: theme.fontSans
                         }
 
                         Rectangle {
-                            height: 22
-                            radius: 11
-                            implicitWidth: filterBadgeTxt.implicitWidth + 16
-                            color: relayController.active_filter_count > 0 ? Qt.alpha(theme.accentCyan, 0.20) : theme.bgSecondary
+                            height: 20
+                            radius: 10
+                            implicitWidth: filterBadgeTxt.implicitWidth + 14
+                            color: relayController.active_filter_count > 0 ? Qt.alpha(theme.accentCyan, 0.18) : theme.bgSecondary
                             border.color: relayController.active_filter_count > 0 ? theme.accentCyan : theme.borderSubtle
+                            border.width: 1
 
                             Text {
                                 id: filterBadgeTxt
@@ -392,53 +439,12 @@ Rectangle {
                     }
 
                     Text {
-                        text: "Manage WeeChat server-side message filters (/filter). Hidden messages stay preserved in backlog history."
+                        text: "WeeChat server-side message suppression (/filter). Filtered lines remain preserved in backlog history."
                         color: theme.textSecondary
                         font.pixelSize: 12
+                        font.family: theme.fontSans
                         elide: Text.ElideRight
                         Layout.fillWidth: true
-                    }
-                }
-
-                // 💾 Save to WeeChat Button
-                Rectangle {
-                    height: 38
-                    radius: 8
-                    implicitWidth: saveBtnContent.implicitWidth + 28
-                    color: filterModal.saveNoticeActive
-                        ? theme.statusOnline
-                        : (saveBtnHover.hovered ? theme.bgHover : theme.bgSecondary)
-                    border.color: filterModal.saveNoticeActive ? theme.statusOnline : theme.borderSubtle
-                    border.width: 1
-
-                    RowLayout {
-                        id: saveBtnContent
-                        anchors.centerIn: parent
-                        spacing: 8
-
-                        Text {
-                            text: filterModal.saveNoticeActive ? "✓" : "💾"
-                            color: filterModal.saveNoticeActive ? theme.bgPrimary : theme.accentCyan
-                            font.pixelSize: 14
-                        }
-
-                        Text {
-                            text: filterModal.saveNoticeActive ? "Saved to WeeChat!" : "Save (/save)"
-                            color: filterModal.saveNoticeActive ? theme.bgPrimary : theme.textPrimary
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                    }
-
-                    HoverHandler { id: saveBtnHover }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            relayController.save_weechat_config()
-                            filterModal.saveNoticeActive = true
-                            saveNoticeTimer.restart()
-                        }
                     }
                 }
             }
@@ -446,29 +452,29 @@ Rectangle {
             // Master Filter Engine Toggle Row (Alt+=)
             Rectangle {
                 Layout.fillWidth: true
-                height: 54
-                radius: 11
+                height: 48
+                radius: 8
                 color: theme.bgSecondary
-                border.color: relayController.filters_global_enabled ? Qt.alpha(theme.accentPrimary, 0.45) : theme.borderSubtle
+                border.color: relayController.filters_global_enabled ? Qt.alpha(theme.accentPrimary, 0.40) : theme.borderSubtle
                 border.width: 1
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 16
-                    anchors.rightMargin: 16
-                    spacing: 14
+                    anchors.leftMargin: 14
+                    anchors.rightMargin: 14
+                    spacing: 12
 
                     Rectangle {
-                        width: 32
-                        height: 32
-                        radius: 16
-                        color: relayController.filters_global_enabled ? Qt.alpha(theme.accentPrimary, 0.25) : theme.bgElevated
+                        width: 28
+                        height: 28
+                        radius: 14
+                        color: relayController.filters_global_enabled ? Qt.alpha(theme.statusOnline, 0.20) : Qt.alpha(theme.statusWarning, 0.20)
 
                         Text {
                             anchors.centerIn: parent
                             text: "⚡"
-                            color: relayController.filters_global_enabled ? theme.accentPrimary : theme.textMuted
-                            font.pixelSize: 15
+                            color: relayController.filters_global_enabled ? theme.statusOnline : theme.statusWarning
+                            font.pixelSize: 13
                         }
                     }
 
@@ -477,20 +483,39 @@ Rectangle {
                         spacing: 2
 
                         RowLayout {
-                            spacing: 10
+                            spacing: 8
                             Text {
-                                text: "Master Filter Engine (Alt+=)"
+                                text: "Global Filter Engine"
                                 color: theme.textPrimary
-                                font.pixelSize: 13
+                                font.pixelSize: 12
                                 font.bold: true
                             }
 
                             Rectangle {
-                                height: 18
-                                radius: 9
-                                implicitWidth: statusTxt.implicitWidth + 12
-                                color: relayController.filters_global_enabled ? Qt.alpha(theme.statusOnline, 0.20) : Qt.alpha(theme.statusWarning, 0.20)
+                                height: 16
+                                radius: 4
+                                implicitWidth: scKbdTxt.implicitWidth + 8
+                                color: theme.bgElevated
+                                border.color: theme.borderSubtle
+                                border.width: 1
+
+                                Text {
+                                    id: scKbdTxt
+                                    anchors.centerIn: parent
+                                    text: "Alt+="
+                                    color: theme.textMuted
+                                    font.pixelSize: 9
+                                    font.family: theme.fontMono
+                                }
+                            }
+
+                            Rectangle {
+                                height: 16
+                                radius: 8
+                                implicitWidth: statusTxt.implicitWidth + 10
+                                color: relayController.filters_global_enabled ? Qt.alpha(theme.statusOnline, 0.15) : Qt.alpha(theme.statusWarning, 0.15)
                                 border.color: relayController.filters_global_enabled ? theme.statusOnline : theme.statusWarning
+                                border.width: 1
 
                                 Text {
                                     id: statusTxt
@@ -505,8 +530,8 @@ Rectangle {
 
                         Text {
                             text: relayController.filters_global_enabled
-                                ? "Filters are actively suppressing noise"
-                                : "All filters bypassed; raw messages and notices are visible"
+                                ? "Filters actively suppressing noise"
+                                : "All filters bypassed; raw messages and notices visible"
                             color: theme.textSecondary
                             font.pixelSize: 11
                         }
@@ -522,34 +547,34 @@ Rectangle {
             // Toast feedback banner (if any)
             Rectangle {
                 Layout.fillWidth: true
-                height: filterModal.toastText.length > 0 ? 36 : 0
+                height: filterModal.toastText.length > 0 ? 32 : 0
                 visible: filterModal.toastText.length > 0
-                radius: 8
-                color: Qt.alpha(theme.accentCyan, 0.15)
+                radius: 6
+                color: Qt.alpha(theme.accentCyan, 0.12)
                 border.color: theme.accentCyan
                 border.width: 1
                 clip: true
 
-                Behavior on height { NumberAnimation { duration: 150 } }
+                Behavior on height { NumberAnimation { duration: 140 } }
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 16
-                    anchors.rightMargin: 16
-                    spacing: 10
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    spacing: 8
 
-                    Text { text: "✓"; color: theme.accentCyan; font.bold: true; font.pixelSize: 13 }
+                    Text { text: "✓"; color: theme.accentCyan; font.bold: true; font.pixelSize: 12 }
                     Text {
                         text: filterModal.toastText
                         color: theme.textPrimary
-                        font.pixelSize: 12
+                        font.pixelSize: 11
                         font.bold: true
                         Layout.fillWidth: true
                     }
                     Text {
                         text: "View Active Filters →"
                         color: theme.accentCyan
-                        font.pixelSize: 12
+                        font.pixelSize: 11
                         font.bold: true
                         MouseArea {
                             anchors.fill: parent
@@ -563,37 +588,56 @@ Rectangle {
             // Segmented Navigation Tabs
             Rectangle {
                 Layout.fillWidth: true
-                height: 44
-                radius: 10
+                height: 38
+                radius: 8
                 color: theme.bgSecondary
                 border.color: theme.borderSubtle
                 border.width: 1
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: 4
-                    spacing: 6
+                    anchors.margins: 3
+                    spacing: 4
 
                     // Tab 0: Active Filters
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.preferredWidth: 1
-                        radius: 8
-                        color: filterModal.currentTab === 0 ? theme.bgActive : "transparent"
-                        border.color: filterModal.currentTab === 0 ? theme.accentCyan : "transparent"
+                        radius: 6
+                        color: filterModal.currentTab === 0 ? theme.bgActive : (tab0Hov.hovered ? theme.bgHover : "transparent")
+                        border.color: filterModal.currentTab === 0 ? theme.accentPrimary : "transparent"
                         border.width: 1
 
-                        Text {
+                        RowLayout {
                             anchors.centerIn: parent
-                            text: "📋  Active Filters (" + relayController.filter_model.rowCount + ")"
-                            color: filterModal.currentTab === 0 ? theme.textPrimary : theme.textSecondary
-                            font.pixelSize: 12
-                            font.bold: filterModal.currentTab === 0
-                            font.family: theme.fontSans
+                            spacing: 6
+
+                            Text {
+                                text: "Active Filters"
+                                color: filterModal.currentTab === 0 ? theme.textPrimary : theme.textSecondary
+                                font.pixelSize: 12
+                                font.bold: filterModal.currentTab === 0
+                                font.family: theme.fontSans
+                            }
+
+                            Rectangle {
+                                height: 16
+                                radius: 8
+                                implicitWidth: t0Count.implicitWidth + 8
+                                color: filterModal.currentTab === 0 ? theme.accentPrimary : theme.bgElevated
+
+                                Text {
+                                    id: t0Count
+                                    anchors.centerIn: parent
+                                    text: activeListView.count
+                                    color: filterModal.currentTab === 0 ? theme.bgPrimary : theme.textMuted
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+                            }
                         }
 
-                        HoverHandler { id: tab0Hover }
+                        HoverHandler { id: tab0Hov }
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
@@ -605,22 +649,41 @@ Rectangle {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.preferredWidth: 1
-                        radius: 8
-                        color: filterModal.currentTab === 1 ? theme.bgActive : "transparent"
-                        border.color: filterModal.currentTab === 1 ? theme.accentCyan : "transparent"
+                        radius: 6
+                        color: filterModal.currentTab === 1 ? theme.bgActive : (tab1Hov.hovered ? theme.bgHover : "transparent")
+                        border.color: filterModal.currentTab === 1 ? theme.accentPrimary : "transparent"
                         border.width: 1
 
-                        Text {
+                        RowLayout {
                             anchors.centerIn: parent
-                            text: "⚡  Preset Templates (6)"
-                            color: filterModal.currentTab === 1 ? theme.textPrimary : theme.textSecondary
-                            font.pixelSize: 12
-                            font.bold: filterModal.currentTab === 1
-                            font.family: theme.fontSans
+                            spacing: 6
+
+                            Text {
+                                text: "Preset Templates"
+                                color: filterModal.currentTab === 1 ? theme.textPrimary : theme.textSecondary
+                                font.pixelSize: 12
+                                font.bold: filterModal.currentTab === 1
+                                font.family: theme.fontSans
+                            }
+
+                            Rectangle {
+                                height: 16
+                                radius: 8
+                                implicitWidth: t1Count.implicitWidth + 8
+                                color: filterModal.currentTab === 1 ? theme.accentPrimary : theme.bgElevated
+
+                                Text {
+                                    id: t1Count
+                                    anchors.centerIn: parent
+                                    text: "6"
+                                    color: filterModal.currentTab === 1 ? theme.bgPrimary : theme.textMuted
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                }
+                            }
                         }
 
-                        HoverHandler { id: tab1Hover }
+                        HoverHandler { id: tab1Hov }
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
@@ -632,22 +695,25 @@ Rectangle {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.preferredWidth: 1
-                        radius: 8
-                        color: filterModal.currentTab === 2 ? theme.bgActive : "transparent"
-                        border.color: filterModal.currentTab === 2 ? theme.accentCyan : "transparent"
+                        radius: 6
+                        color: filterModal.currentTab === 2 ? theme.bgActive : (tab2Hov.hovered ? theme.bgHover : "transparent")
+                        border.color: filterModal.currentTab === 2 ? theme.accentPrimary : "transparent"
                         border.width: 1
 
-                        Text {
+                        RowLayout {
                             anchors.centerIn: parent
-                            text: "🛠️  Custom Filter"
-                            color: filterModal.currentTab === 2 ? theme.textPrimary : theme.textSecondary
-                            font.pixelSize: 12
-                            font.bold: filterModal.currentTab === 2
-                            font.family: theme.fontSans
+                            spacing: 6
+
+                            Text {
+                                text: "+ New Custom Filter"
+                                color: filterModal.currentTab === 2 ? theme.textPrimary : theme.textSecondary
+                                font.pixelSize: 12
+                                font.bold: filterModal.currentTab === 2
+                                font.family: theme.fontSans
+                            }
                         }
 
-                        HoverHandler { id: tab2Hover }
+                        HoverHandler { id: tab2Hov }
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
@@ -665,45 +731,85 @@ Rectangle {
                 currentIndex: filterModal.currentTab
 
                 // ==========================================
-                // VIEW 0: ACTIVE FILTERS (HERO SECTION)
+                // VIEW 0: ACTIVE FILTERS
                 // ==========================================
                 ColumnLayout {
                     id: activeFiltersView
                     spacing: 10
 
-                    // Active Filters Sub-header & Controls Bar
+                    // Search and Action Bar
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        Text {
-                            text: "CONFIGURED FILTERS"
-                            color: theme.accentCyan
-                            font.pixelSize: 11
-                            font.bold: true
-                            font.letterSpacing: 1.2
-                        }
+                        // Search Input
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 34
+                            radius: 6
+                            color: theme.bgInput
+                            border.color: searchFiltersInput.activeFocus ? theme.borderFocus : theme.borderSubtle
+                            border.width: 1
 
-                        Text {
-                            text: "— Click toggle to enable or pause filter"
-                            color: theme.textMuted
-                            font.pixelSize: 11
-                        }
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 10
+                                spacing: 8
 
-                        Item { Layout.fillWidth: true }
+                                Text {
+                                    text: "🔍"
+                                    font.pixelSize: 11
+                                    color: theme.textMuted
+                                }
+
+                                TextInput {
+                                    id: searchFiltersInput
+                                    Layout.fillWidth: true
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    color: theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.family: theme.fontSans
+                                    selectByMouse: true
+                                }
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 26
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: "Filter by name, tag, or buffer..."
+                                    color: theme.textMuted
+                                    font.pixelSize: 11
+                                    visible: searchFiltersInput.text.length === 0 && !searchFiltersInput.activeFocus
+                                }
+
+                                Text {
+                                    text: "✕"
+                                    color: theme.textMuted
+                                    font.pixelSize: 11
+                                    visible: searchFiltersInput.text.length > 0
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: searchFiltersInput.text = ""
+                                    }
+                                }
+                            }
+                        }
 
                         // Refresh list button
                         Rectangle {
-                            height: 30
-                            radius: 7
-                            implicitWidth: refreshRow.implicitWidth + 18
+                            height: 34
+                            radius: 6
+                            implicitWidth: refreshRow.implicitWidth + 16
                             color: refHover.hovered ? theme.bgHover : theme.bgSecondary
                             border.color: theme.borderSubtle
+                            border.width: 1
 
                             RowLayout {
                                 id: refreshRow
                                 anchors.centerIn: parent
-                                spacing: 6
+                                spacing: 5
                                 Text { text: "⟳"; color: theme.textSecondary; font.pixelSize: 12 }
                                 Text { text: "Refresh"; color: theme.textSecondary; font.pixelSize: 11; font.bold: true }
                             }
@@ -716,17 +822,17 @@ Rectangle {
                             }
                         }
 
-                        // Quick Add Button
+                        // Add Filter Button (leads to Presets)
                         Rectangle {
-                            height: 30
-                            radius: 7
+                            height: 34
+                            radius: 6
                             implicitWidth: addQuickRow.implicitWidth + 18
                             color: addQuickHover.hovered ? theme.accentHover : theme.accentPrimary
 
                             RowLayout {
                                 id: addQuickRow
                                 anchors.centerIn: parent
-                                spacing: 6
+                                spacing: 5
                                 Text { text: "+"; color: theme.bgPrimary; font.bold: true; font.pixelSize: 13 }
                                 Text { text: "Add Filter"; color: theme.bgPrimary; font.bold: true; font.pixelSize: 11 }
                             }
@@ -740,342 +846,284 @@ Rectangle {
                         }
                     }
 
-                    // Search / Filter Input
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 36
-                        radius: 8
-                        color: theme.bgInput
-                        border.color: searchFiltersInput.activeFocus ? theme.borderFocus : theme.borderSubtle
-                        visible: relayController.filter_model.rowCount > 1
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 12
-                            anchors.rightMargin: 12
-                            spacing: 8
-
-                            Text { text: "🔍"; font.pixelSize: 12; color: theme.textMuted }
-                            TextInput {
-                                id: searchFiltersInput
-                                Layout.fillWidth: true
-                                verticalAlignment: TextInput.AlignVCenter
-                                color: theme.textPrimary
-                                font.pixelSize: 12
-                                font.family: theme.fontSans
-                                selectByMouse: true
-                            }
-                            Text {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 30
-                                verticalAlignment: Text.AlignVCenter
-                                text: "Search filters by name, tag, or buffer scope..."
-                                color: theme.textMuted
-                                font.pixelSize: 12
-                                visible: searchFiltersInput.text.length === 0 && !searchFiltersInput.activeFocus
-                            }
-                            Text {
-                                text: "✕"
-                                color: theme.textMuted
-                                font.pixelSize: 12
-                                visible: searchFiltersInput.text.length > 0
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: searchFiltersInput.text = ""
-                                }
-                            }
-                        }
-                    }
-
-                    // Scrollable List of Active Filters
-                    ScrollView {
+                    // Content Area (ListView or Empty State)
+                    Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        clip: true
-                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                        ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-                        Item {
-                            id: activeListContainer
-                            width: parent.width
-                            implicitHeight: activeFiltersCol.implicitHeight + 20
+                        // Empty State Card (when no filters exist)
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 10
+                            color: theme.bgSecondary
+                            border.color: theme.borderSubtle
+                            border.width: 1
+                            visible: activeListView.count === 0
 
                             ColumnLayout {
-                                id: activeFiltersCol
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.rightMargin: 12
-                                spacing: 10
+                                anchors.centerIn: parent
+                                spacing: 12
+                                Layout.alignment: Qt.AlignHCenter
 
-                                // Empty State Card
                                 Rectangle {
-                                    Layout.fillWidth: true
-                                    height: 190
-                                    radius: 12
-                                    color: theme.bgSecondary
-                                    border.color: theme.borderSubtle
-                                    visible: relayController.filter_model.rowCount === 0
+                                    width: 44
+                                    height: 44
+                                    radius: 22
+                                    color: theme.bgElevated
+                                    Layout.alignment: Qt.AlignHCenter
 
-                                    ColumnLayout {
+                                    Text {
                                         anchors.centerIn: parent
-                                        spacing: 12
-                                        Layout.alignment: Qt.AlignHCenter
-
-                                        Text {
-                                            text: "⚡"
-                                            font.pixelSize: 32
-                                            Layout.alignment: Qt.AlignHCenter
-                                        }
-
-                                        Text {
-                                            text: "No WeeChat filters configured yet"
-                                            color: theme.textPrimary
-                                            font.pixelSize: 15
-                                            font.bold: true
-                                            Layout.alignment: Qt.AlignHCenter
-                                        }
-
-                                        Text {
-                                            text: "Filters eliminate background noise like join/parts, mute bots, or silence specific users."
-                                            color: theme.textSecondary
-                                            font.pixelSize: 12
-                                            Layout.alignment: Qt.AlignHCenter
-                                        }
-
-                                        RowLayout {
-                                            spacing: 12
-                                            Layout.alignment: Qt.AlignHCenter
-
-                                            Rectangle {
-                                                height: 36
-                                                radius: 8
-                                                implicitWidth: browsePresetBtnTxt.implicitWidth + 24
-                                                color: bpbtnHover.hovered ? theme.accentHover : theme.accentPrimary
-
-                                                Text {
-                                                    id: browsePresetBtnTxt
-                                                    anchors.centerIn: parent
-                                                    text: "⚡ Choose from Presets"
-                                                    color: theme.bgPrimary
-                                                    font.pixelSize: 12
-                                                    font.bold: true
-                                                }
-
-                                                HoverHandler { id: bpbtnHover }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: filterModal.currentTab = 1
-                                                }
-                                            }
-
-                                            Rectangle {
-                                                height: 36
-                                                radius: 8
-                                                implicitWidth: custBtnTxt.implicitWidth + 24
-                                                color: cbtnHover.hovered ? theme.bgHover : theme.bgElevated
-                                                border.color: theme.borderSubtle
-
-                                                Text {
-                                                    id: custBtnTxt
-                                                    anchors.centerIn: parent
-                                                    text: "🛠️ Create Custom Filter"
-                                                    color: theme.textPrimary
-                                                    font.pixelSize: 12
-                                                    font.bold: true
-                                                }
-
-                                                HoverHandler { id: cbtnHover }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: filterModal.currentTab = 2
-                                                }
-                                            }
-                                        }
+                                        text: "🛡️"
+                                        font.pixelSize: 20
                                     }
                                 }
 
-                                // List of Active Filters
-                                Repeater {
-                                    model: relayController.filter_model
-                                    delegate: Rectangle {
-                                        id: filterRowRoot
-                                        property bool matchesSearch: searchFiltersInput.text.length === 0
-                                            || model.name.toLowerCase().indexOf(searchFiltersInput.text.toLowerCase()) !== -1
-                                            || model.tags.toLowerCase().indexOf(searchFiltersInput.text.toLowerCase()) !== -1
-                                            || model.buffer.toLowerCase().indexOf(searchFiltersInput.text.toLowerCase()) !== -1
+                                Text {
+                                    text: "No WeeChat filters configured yet"
+                                    color: theme.textPrimary
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
 
-                                        visible: matchesSearch
-                                        Layout.fillWidth: true
-                                        height: visible ? implicitHeight : 0
-                                        implicitHeight: 72
-                                        radius: 10
-                                        color: model.enabled
-                                            ? Qt.alpha(theme.accentPrimary, 0.08)
-                                            : (filterRowHover.hovered ? theme.bgHover : theme.bgSecondary)
-                                        border.color: model.enabled ? Qt.alpha(theme.accentPrimary, 0.35) : theme.borderSubtle
+                                Text {
+                                    text: "Filters eliminate background noise like join/parts, mute bots, or silence specific users."
+                                    color: theme.textSecondary
+                                    font.pixelSize: 11
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+
+                                RowLayout {
+                                    spacing: 10
+                                    Layout.alignment: Qt.AlignHCenter
+
+                                    Rectangle {
+                                        height: 34
+                                        radius: 6
+                                        implicitWidth: bpbtnTxt.implicitWidth + 20
+                                        color: bpbtnHover.hovered ? theme.accentHover : theme.accentPrimary
+
+                                        Text {
+                                            id: bpbtnTxt
+                                            anchors.centerIn: parent
+                                            text: "⚡ Browse Presets"
+                                            color: theme.bgPrimary
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                        }
+
+                                        HoverHandler { id: bpbtnHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: filterModal.currentTab = 1
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        height: 34
+                                        radius: 6
+                                        implicitWidth: custBtnTxt.implicitWidth + 20
+                                        color: cbtnHover.hovered ? theme.bgHover : theme.bgElevated
+                                        border.color: theme.borderSubtle
                                         border.width: 1
 
-                                        HoverHandler { id: filterRowHover }
+                                        Text {
+                                            id: custBtnTxt
+                                            anchors.centerIn: parent
+                                            text: "🛠️ Create Custom Rule"
+                                            color: theme.textPrimary
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                        }
 
-                                        RowLayout {
+                                        HoverHandler { id: cbtnHover }
+                                        MouseArea {
                                             anchors.fill: parent
-                                            anchors.leftMargin: 16
-                                            anchors.rightMargin: 16
-                                            spacing: 14
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: filterModal.currentTab = 2
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
-                                            // Authoritative, Custom-Engineered Switch (Zero snap-back)
-                                            ModernSwitch {
-                                                checked: model.enabled
-                                                onToggled: relayController.toggle_weechat_filter(model.name)
+                        // Native ListView for Active Filters (Smooth scrolling, zero overlapping on updates)
+                        ListView {
+                            id: activeListView
+                            anchors.fill: parent
+                            clip: true
+                            model: relayController.filter_model
+                            spacing: 0
+                            boundsBehavior: Flickable.StopAtBounds
+
+                            ScrollBar.vertical: ScrollBar {
+                                id: activeListVBar
+                                policy: ScrollBar.AsNeeded
+                            }
+
+                            delegate: Item {
+                                id: filterRowDelegate
+                                width: activeListView.width
+                                property string qText: (searchFiltersInput.text || "").toLowerCase().trim()
+                                property string fName: (model.name || "").toString().toLowerCase()
+                                property string fTags: (model.tags || "").toString().toLowerCase()
+                                property string fBuf: (model.buffer || "").toString().toLowerCase()
+                                property bool matchesSearch: qText.length === 0
+                                    || fName.indexOf(qText) !== -1
+                                    || fTags.indexOf(qText) !== -1
+                                    || fBuf.indexOf(qText) !== -1
+
+                                visible: matchesSearch
+                                height: matchesSearch ? 76 : 0
+                                clip: true
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.bottomMargin: 8
+                                    anchors.rightMargin: activeListVBar.visible ? 10 : 0
+                                    radius: 8
+                                    color: model.enabled
+                                        ? (filterRowHover.hovered ? theme.bgHover : theme.bgSecondary)
+                                        : (filterRowHover.hovered ? theme.bgHover : Qt.alpha(theme.bgSecondary, 0.6))
+                                    border.color: model.enabled
+                                        ? (filterRowHover.hovered ? theme.borderFocus : Qt.alpha(theme.accentPrimary, 0.35))
+                                        : theme.borderSubtle
+                                    border.width: 1
+
+                                    HoverHandler { id: filterRowHover }
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 14
+                                        anchors.rightMargin: 14
+                                        spacing: 12
+
+                                        // Switch
+                                        ModernSwitch {
+                                            checked: model.enabled
+                                            onToggled: relayController.toggle_weechat_filter(model.name)
+                                        }
+
+                                        // Icon
+                                        Rectangle {
+                                            width: 34
+                                            height: 34
+                                            radius: 8
+                                            color: model.enabled ? Qt.alpha(theme.accentPrimary, 0.18) : theme.bgElevated
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: filterModal.getFilterIcon(model.name, model.tags)
+                                                font.pixelSize: 16
                                             }
+                                        }
 
-                                            // Category Icon Badge
-                                            Rectangle {
-                                                width: 38
-                                                height: 38
-                                                radius: 9
-                                                color: model.enabled ? Qt.alpha(theme.accentPrimary, 0.22) : theme.bgElevated
+                                        // Filter Info
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 3
 
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: filterModal.getFilterIcon(model.name, model.tags)
-                                                    font.pixelSize: 16
-                                                }
-                                            }
-
-                                            // Filter Info Column
-                                            ColumnLayout {
+                                            RowLayout {
+                                                spacing: 8
                                                 Layout.fillWidth: true
-                                                spacing: 4
-
-                                                RowLayout {
-                                                    spacing: 10
-                                                    Text {
-                                                        text: model.name
-                                                        color: theme.textPrimary
-                                                        font.pixelSize: 13
-                                                        font.bold: true
-                                                        font.family: theme.fontMono
-                                                        elide: Text.ElideRight
-                                                    }
-
-                                                    // Type Badge
-                                                    Rectangle {
-                                                        height: 20
-                                                        radius: 5
-                                                        implicitWidth: typeTxt.implicitWidth + 10
-                                                        color: theme.bgElevated
-                                                        border.color: theme.borderSubtle
-
-                                                        Text {
-                                                            id: typeTxt
-                                                            anchors.centerIn: parent
-                                                            text: filterModal.getFilterCategory(model.name, model.tags)
-                                                            color: theme.accentCyan
-                                                            font.pixelSize: 10
-                                                            font.bold: true
-                                                        }
-                                                    }
-
-                                                    // Status Tag (ENABLED / PAUSED)
-                                                    Rectangle {
-                                                        height: 20
-                                                        radius: 5
-                                                        implicitWidth: stTagTxt.implicitWidth + 10
-                                                        color: model.enabled ? Qt.alpha(theme.statusOnline, 0.18) : Qt.alpha(theme.textMuted, 0.18)
-                                                        border.color: model.enabled ? theme.statusOnline : theme.borderSubtle
-
-                                                        Text {
-                                                            id: stTagTxt
-                                                            anchors.centerIn: parent
-                                                            text: model.enabled ? "ENABLED" : "PAUSED"
-                                                            color: model.enabled ? theme.statusOnline : theme.textMuted
-                                                            font.pixelSize: 10
-                                                            font.bold: true
-                                                        }
-                                                    }
-                                                }
-
-                                                // Details chips (Scope, Tags, Regex) with generous padding
-                                                RowLayout {
-                                                    spacing: 8
-                                                    Layout.fillWidth: true
-
-                                                    Rectangle {
-                                                        height: 20
-                                                        radius: 4
-                                                        implicitWidth: scChipTxt.implicitWidth + 10
-                                                        color: theme.bgElevated
-                                                        Text {
-                                                            id: scChipTxt
-                                                            anchors.centerIn: parent
-                                                            text: "Scope: " + (model.buffer === "*" ? "Global (*)" : model.buffer)
-                                                            color: theme.textSecondary
-                                                            font.pixelSize: 10
-                                                            font.family: theme.fontMono
-                                                        }
-                                                    }
-
-                                                    Rectangle {
-                                                        height: 20
-                                                        radius: 4
-                                                        implicitWidth: tagChipTxt.implicitWidth + 10
-                                                        color: theme.bgElevated
-                                                        Text {
-                                                            id: tagChipTxt
-                                                            anchors.centerIn: parent
-                                                            text: "Tags: " + model.tags
-                                                            color: theme.textSecondary
-                                                            font.pixelSize: 10
-                                                            font.family: theme.fontMono
-                                                            elide: Text.ElideRight
-                                                        }
-                                                    }
-
-                                                    Rectangle {
-                                                        height: 20
-                                                        radius: 4
-                                                        implicitWidth: regChipTxt.implicitWidth + 10
-                                                        color: theme.bgElevated
-                                                        Text {
-                                                            id: regChipTxt
-                                                            anchors.centerIn: parent
-                                                            text: "Pattern: " + (model.regex === "*" ? "any (*)" : model.regex)
-                                                            color: theme.textMuted
-                                                            font.pixelSize: 10
-                                                            font.family: theme.fontMono
-                                                        }
-                                                    }
-
-                                                    Item { Layout.fillWidth: true }
-                                                }
-                                            }
-
-                                            // Delete Button
-                                            Rectangle {
-                                                width: 34
-                                                height: 34
-                                                radius: 8
-                                                color: delHover.hovered ? Qt.alpha(theme.statusError, 0.25) : "transparent"
-                                                border.color: delHover.hovered ? theme.statusError : "transparent"
 
                                                 Text {
-                                                    anchors.centerIn: parent
-                                                    text: "🗑"
-                                                    color: delHover.hovered ? theme.statusError : theme.textMuted
-                                                    font.pixelSize: 14
+                                                    text: model.name
+                                                    color: model.enabled ? theme.textPrimary : theme.textMuted
+                                                    font.pixelSize: 13
+                                                    font.bold: true
+                                                    font.family: theme.fontMono
+                                                    elide: Text.ElideRight
                                                 }
 
-                                                HoverHandler { id: delHover }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: relayController.delete_weechat_filter(model.name)
+                                                // Scope Pill
+                                                Rectangle {
+                                                    height: 18
+                                                    radius: 4
+                                                    implicitWidth: scTxt.implicitWidth + 8
+                                                    color: theme.bgElevated
+                                                    border.color: theme.borderSubtle
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: scTxt
+                                                        anchors.centerIn: parent
+                                                        text: model.buffer === "*" ? "Global (*)" : model.buffer
+                                                        color: theme.textSecondary
+                                                        font.pixelSize: 10
+                                                        font.family: theme.fontMono
+                                                    }
                                                 }
+
+                                                // Status Tag
+                                                Rectangle {
+                                                    height: 18
+                                                    radius: 4
+                                                    implicitWidth: stPillTxt.implicitWidth + 8
+                                                    color: model.enabled ? Qt.alpha(theme.statusOnline, 0.15) : Qt.alpha(theme.textMuted, 0.15)
+                                                    border.color: model.enabled ? Qt.alpha(theme.statusOnline, 0.5) : theme.borderSubtle
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: stPillTxt
+                                                        anchors.centerIn: parent
+                                                        text: model.enabled ? "Active" : "Paused"
+                                                        color: model.enabled ? theme.statusOnline : theme.textMuted
+                                                        font.pixelSize: 10
+                                                        font.bold: true
+                                                    }
+                                                }
+
+                                                Item { Layout.fillWidth: true }
+                                            }
+
+                                            RowLayout {
+                                                spacing: 12
+                                                Layout.fillWidth: true
+
+                                                Text {
+                                                    text: "Tags: " + model.tags
+                                                    color: theme.textSecondary
+                                                    font.pixelSize: 11
+                                                    font.family: theme.fontMono
+                                                    elide: Text.ElideRight
+                                                    Layout.maximumWidth: parent.width * 0.55
+                                                }
+
+                                                Text {
+                                                    text: "• Pattern: " + (model.regex === "*" ? "any (*)" : model.regex)
+                                                    color: theme.textMuted
+                                                    font.pixelSize: 11
+                                                    font.family: theme.fontMono
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                }
+                                            }
+                                        }
+
+                                        // Delete Button
+                                        Rectangle {
+                                            width: 30
+                                            height: 30
+                                            radius: 6
+                                            color: delHover.hovered ? Qt.alpha(theme.statusError, 0.20) : "transparent"
+                                            border.color: delHover.hovered ? theme.statusError : "transparent"
+                                            border.width: 1
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "🗑"
+                                                color: delHover.hovered ? theme.statusError : theme.textMuted
+                                                font.pixelSize: 13
+                                            }
+
+                                            HoverHandler { id: delHover }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: relayController.delete_weechat_filter(model.name)
                                             }
                                         }
                                     }
@@ -1090,23 +1138,14 @@ Rectangle {
                 // ==========================================
                 ColumnLayout {
                     id: presetsView
-                    spacing: 12
+                    spacing: 10
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-                        Text {
-                            text: "POPULAR IRC PRESETS"
-                            color: theme.accentCyan
-                            font.pixelSize: 11
-                            font.bold: true
-                            font.letterSpacing: 1.2
-                        }
-                        Text {
-                            text: "— Common IRC filter templates ready to install into your Active Filters."
-                            color: theme.textMuted
-                            font.pixelSize: 11
-                        }
+                    Text {
+                        text: "POPULAR IRC PRESETS — Ready-to-use suppression rules recommended by WeeChat"
+                        color: theme.textMuted
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.letterSpacing: 0.6
                     }
 
                     ScrollView {
@@ -1118,59 +1157,56 @@ Rectangle {
 
                         Item {
                             width: parent.width
-                            implicitHeight: presetsGrid.implicitHeight + 24
+                            implicitHeight: presetsGrid.implicitHeight + 16
 
                             GridLayout {
                                 id: presetsGrid
                                 anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.top: parent.top
-                                anchors.rightMargin: 12
+                                anchors.rightMargin: 10
                                 columns: 2
-                                columnSpacing: 14
-                                rowSpacing: 14
+                                columnSpacing: 12
+                                rowSpacing: 12
 
                                 // Preset 1: Smart Filter
                                 FilterTemplateCard {
-                                    Layout.fillWidth: true
                                     theme: filterModal.theme
                                     iconText: "🛡️"
                                     title: "Smart Filter (Recommended)"
-                                    description: "Hide idle lurkers; only show join/part events for users who spoke in the last 30 minutes. Auto-enables irc.look.smart_filter."
+                                    description: "Hides idle lurkers; only shows join/part/quit events for users who spoke in the last 30 minutes."
                                     presetKey: "smart_filter"
                                     filterName: "irc_smart_filter"
                                     tagsSummary: "irc_smart_filter"
                                     isInstalled: filterModal.isFilterInstalled("irc_smart_filter")
-                                    onAddRequested: {
+                                    isActive: filterModal.isFilterActive("irc_smart_filter")
+                                    onToggled: {
                                         relayController.toggle_preset_filter("smart_filter")
-                                        filterModal.showToast("Added 'Smart Filter' to Active Filters")
-                                        filterModal.currentTab = 0
+                                        filterModal.showToast((isInstalled && isActive ? "Paused" : "Enabled") + " 'Smart Filter'")
                                     }
                                     onViewRequested: filterModal.currentTab = 0
                                 }
 
                                 // Preset 2: Join / Part / Quit Silence
                                 FilterTemplateCard {
-                                    Layout.fillWidth: true
                                     theme: filterModal.theme
                                     iconText: "🚪"
                                     title: "All Joins, Parts & Quits"
                                     description: "Completely silence all channel entry, departure, and quit notices across all channels to eliminate busy-room flood."
                                     presetKey: "join_part_quit"
                                     filterName: "join_part_quit"
-                                    tagsSummary: "irc_join,irc_part,irc_quit"
+                                    tagsSummary: "irc_join, irc_part, irc_quit"
                                     isInstalled: filterModal.isFilterInstalled("join_part_quit")
-                                    onAddRequested: {
+                                    isActive: filterModal.isFilterActive("join_part_quit")
+                                    onToggled: {
                                         relayController.toggle_preset_filter("join_part_quit")
-                                        filterModal.showToast("Added 'All Joins, Parts & Quits' to Active Filters")
-                                        filterModal.currentTab = 0
+                                        filterModal.showToast((isInstalled && isActive ? "Paused" : "Enabled") + " 'All Joins, Parts & Quits'")
                                     }
                                     onViewRequested: filterModal.currentTab = 0
                                 }
 
                                 // Preset 3: Nick Changes
                                 FilterTemplateCard {
-                                    Layout.fillWidth: true
                                     theme: filterModal.theme
                                     iconText: "🏷️"
                                     title: "Nickname Changes"
@@ -1179,17 +1215,16 @@ Rectangle {
                                     filterName: "nick_changes"
                                     tagsSummary: "irc_nick"
                                     isInstalled: filterModal.isFilterInstalled("nick_changes")
-                                    onAddRequested: {
+                                    isActive: filterModal.isFilterActive("nick_changes")
+                                    onToggled: {
                                         relayController.toggle_preset_filter("nick_changes")
-                                        filterModal.showToast("Added 'Nickname Changes' to Active Filters")
-                                        filterModal.currentTab = 0
+                                        filterModal.showToast((isInstalled && isActive ? "Paused" : "Enabled") + " 'Nickname Changes'")
                                     }
                                     onViewRequested: filterModal.currentTab = 0
                                 }
 
                                 // Preset 4: Channel Modes & Bans
                                 FilterTemplateCard {
-                                    Layout.fillWidth: true
                                     theme: filterModal.theme
                                     iconText: "🔧"
                                     title: "Channel Modes & Bans"
@@ -1198,17 +1233,16 @@ Rectangle {
                                     filterName: "channel_modes"
                                     tagsSummary: "irc_mode"
                                     isInstalled: filterModal.isFilterInstalled("channel_modes")
-                                    onAddRequested: {
+                                    isActive: filterModal.isFilterActive("channel_modes")
+                                    onToggled: {
                                         relayController.toggle_preset_filter("channel_modes")
-                                        filterModal.showToast("Added 'Channel Modes & Bans' to Active Filters")
-                                        filterModal.currentTab = 0
+                                        filterModal.showToast((isInstalled && isActive ? "Paused" : "Enabled") + " 'Channel Modes & Bans'")
                                     }
                                     onViewRequested: filterModal.currentTab = 0
                                 }
 
                                 // Preset 5: Topic Changes
                                 FilterTemplateCard {
-                                    Layout.fillWidth: true
                                     theme: filterModal.theme
                                     iconText: "📢"
                                     title: "Channel Topic Notices"
@@ -1217,29 +1251,28 @@ Rectangle {
                                     filterName: "topic_changes"
                                     tagsSummary: "irc_topic"
                                     isInstalled: filterModal.isFilterInstalled("topic_changes")
-                                    onAddRequested: {
+                                    isActive: filterModal.isFilterActive("topic_changes")
+                                    onToggled: {
                                         relayController.toggle_preset_filter("topic_changes")
-                                        filterModal.showToast("Added 'Channel Topic Notices' to Active Filters")
-                                        filterModal.currentTab = 0
+                                        filterModal.showToast((isInstalled && isActive ? "Paused" : "Enabled") + " 'Channel Topic Notices'")
                                     }
                                     onViewRequested: filterModal.currentTab = 0
                                 }
 
                                 // Preset 6: Service Bots
                                 FilterTemplateCard {
-                                    Layout.fillWidth: true
                                     theme: filterModal.theme
                                     iconText: "🤖"
                                     title: "Service Bot Notices"
                                     description: "Suppress automated ChanServ and NickServ announcement noise in public rooms."
                                     presetKey: "service_bots"
                                     filterName: "service_bots"
-                                    tagsSummary: "nick_chanserv,nick_nickserv"
+                                    tagsSummary: "nick_chanserv, nick_nickserv"
                                     isInstalled: filterModal.isFilterInstalled("service_bots")
-                                    onAddRequested: {
+                                    isActive: filterModal.isFilterActive("service_bots")
+                                    onToggled: {
                                         relayController.toggle_preset_filter("service_bots")
-                                        filterModal.showToast("Added 'Service Bot Notices' to Active Filters")
-                                        filterModal.currentTab = 0
+                                        filterModal.showToast((isInstalled && isActive ? "Paused" : "Enabled") + " 'Service Bot Notices'")
                                     }
                                     onViewRequested: filterModal.currentTab = 0
                                 }
@@ -1253,29 +1286,20 @@ Rectangle {
                 // ==========================================
                 ColumnLayout {
                     id: customFilterView
-                    spacing: 12
+                    spacing: 10
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-                        Text {
-                            text: "CREATE CUSTOM WEECHAT FILTER"
-                            color: theme.accentCyan
-                            font.pixelSize: 11
-                            font.bold: true
-                            font.letterSpacing: 1.2
-                        }
-                        Text {
-                            text: "— Custom name, buffer scope, event tags, and regex pattern (/filter add)"
-                            color: theme.textMuted
-                            font.pixelSize: 11
-                        }
+                    Text {
+                        text: "CUSTOM WEECHAT FILTER — Define buffer scope, event tags, and regex pattern (/filter add)"
+                        color: theme.textMuted
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.letterSpacing: 0.6
                     }
 
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        radius: 12
+                        radius: 10
                         color: theme.bgSecondary
                         border.color: theme.borderSubtle
                         border.width: 1
@@ -1288,58 +1312,59 @@ Rectangle {
 
                             Item {
                                 width: parent.width
-                                implicitHeight: customFormCol.implicitHeight + 36
+                                implicitHeight: customFormCol.implicitHeight + 32
 
                                 ColumnLayout {
                                     id: customFormCol
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.top: parent.top
-                                    anchors.margins: 20
-                                    anchors.rightMargin: 28
-                                    spacing: 16
+                                    anchors.margins: 18
+                                    anchors.rightMargin: 24
+                                    spacing: 14
 
                                     // Filter Name & Buffer Scope Row
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 16
+                                        spacing: 14
 
                                         ColumnLayout {
                                             Layout.fillWidth: true
                                             Layout.preferredWidth: 1
-                                            spacing: 6
+                                            spacing: 5
 
                                             Text {
                                                 text: "Filter Name *"
                                                 color: theme.textSecondary
-                                                font.pixelSize: 12
+                                                font.pixelSize: 11
                                                 font.bold: true
                                             }
 
                                             Rectangle {
                                                 Layout.fillWidth: true
-                                                height: 40
-                                                radius: 8
+                                                height: 36
+                                                radius: 6
                                                 color: theme.bgInput
                                                 border.color: filterNameInput.activeFocus ? theme.borderFocus : theme.borderSubtle
+                                                border.width: 1
                                                 clip: true
 
                                                 TextInput {
                                                     id: filterNameInput
                                                     anchors.fill: parent
-                                                    anchors.leftMargin: 12
-                                                    anchors.rightMargin: 12
+                                                    anchors.leftMargin: 10
+                                                    anchors.rightMargin: 10
                                                     verticalAlignment: TextInput.AlignVCenter
                                                     color: theme.textPrimary
-                                                    font.pixelSize: 13
+                                                    font.pixelSize: 12
                                                     font.family: theme.fontMono
                                                     selectByMouse: true
                                                 }
 
                                                 Text {
                                                     anchors.fill: parent
-                                                    anchors.leftMargin: 12
-                                                    anchors.rightMargin: 12
+                                                    anchors.leftMargin: 10
+                                                    anchors.rightMargin: 10
                                                     verticalAlignment: Text.AlignVCenter
                                                     text: "e.g. mute_bot, hide_dice"
                                                     color: theme.textMuted
@@ -1355,12 +1380,12 @@ Rectangle {
                                         ColumnLayout {
                                             Layout.fillWidth: true
                                             Layout.preferredWidth: 1
-                                            spacing: 6
+                                            spacing: 5
 
                                             Text {
                                                 text: "Buffer / Channel Scope (* for global)"
                                                 color: theme.textSecondary
-                                                font.pixelSize: 12
+                                                font.pixelSize: 11
                                                 font.bold: true
                                             }
 
@@ -1370,40 +1395,42 @@ Rectangle {
 
                                                 Rectangle {
                                                     Layout.fillWidth: true
-                                                    height: 40
-                                                    radius: 8
+                                                    height: 36
+                                                    radius: 6
                                                     color: theme.bgInput
                                                     border.color: bufferPatternInput.activeFocus ? theme.borderFocus : theme.borderSubtle
+                                                    border.width: 1
                                                     clip: true
 
                                                     TextInput {
                                                         id: bufferPatternInput
                                                         anchors.fill: parent
-                                                        anchors.leftMargin: 12
-                                                        anchors.rightMargin: 12
+                                                        anchors.leftMargin: 10
+                                                        anchors.rightMargin: 10
                                                         verticalAlignment: TextInput.AlignVCenter
                                                         color: theme.textPrimary
-                                                        font.pixelSize: 13
+                                                        font.pixelSize: 12
                                                         font.family: theme.fontMono
                                                         text: "*"
                                                         selectByMouse: true
                                                     }
                                                 }
 
-                                                // Current Buffer Quick Button
+                                                // Current Buffer Button
                                                 Rectangle {
-                                                    height: 40
-                                                    radius: 8
-                                                    implicitWidth: currBufTxt.implicitWidth + 20
+                                                    height: 36
+                                                    radius: 6
+                                                    implicitWidth: currBufTxt.implicitWidth + 16
                                                     color: curBufHover.hovered ? theme.bgHover : theme.bgElevated
                                                     border.color: theme.borderSubtle
+                                                    border.width: 1
 
                                                     Text {
                                                         id: currBufTxt
                                                         anchors.centerIn: parent
                                                         text: "Current Buffer"
                                                         color: theme.textSecondary
-                                                        font.pixelSize: 12
+                                                        font.pixelSize: 11
                                                         font.bold: true
                                                     }
 
@@ -1425,19 +1452,19 @@ Rectangle {
                                     // Event Tags Row
                                     ColumnLayout {
                                         Layout.fillWidth: true
-                                        spacing: 8
+                                        spacing: 6
 
                                         Text {
                                             text: "Event Tags (comma-separated or click chips to append)"
                                             color: theme.textSecondary
-                                            font.pixelSize: 12
+                                            font.pixelSize: 11
                                             font.bold: true
                                         }
 
                                         // Quick Tag Helper Chips
                                         Flow {
                                             Layout.fillWidth: true
-                                            spacing: 8
+                                            spacing: 6
 
                                             FilterTagChip { tagLabel: "Joins (irc_join)"; tagCode: "irc_join"; targetInput: tagsInput; theme: filterModal.theme }
                                             FilterTagChip { tagLabel: "Parts (irc_part)"; tagCode: "irc_part"; targetInput: tagsInput; theme: filterModal.theme }
@@ -1452,20 +1479,21 @@ Rectangle {
 
                                         Rectangle {
                                             Layout.fillWidth: true
-                                            height: 40
-                                            radius: 8
+                                            height: 36
+                                            radius: 6
                                             color: theme.bgInput
                                             border.color: tagsInput.activeFocus ? theme.borderFocus : theme.borderSubtle
+                                            border.width: 1
                                             clip: true
 
                                             TextInput {
                                                 id: tagsInput
                                                 anchors.fill: parent
-                                                anchors.leftMargin: 12
-                                                anchors.rightMargin: 12
+                                                anchors.leftMargin: 10
+                                                anchors.rightMargin: 10
                                                 verticalAlignment: TextInput.AlignVCenter
                                                 color: theme.textPrimary
-                                                font.pixelSize: 13
+                                                font.pixelSize: 12
                                                 font.family: theme.fontMono
                                                 text: "irc_join,irc_part"
                                                 selectByMouse: true
@@ -1476,31 +1504,32 @@ Rectangle {
                                     // Regex Pattern Row
                                     ColumnLayout {
                                         Layout.fillWidth: true
-                                        spacing: 6
+                                        spacing: 5
 
                                         Text {
                                             text: "Regular Expression Pattern (* for any message text)"
                                             color: theme.textSecondary
-                                            font.pixelSize: 12
+                                            font.pixelSize: 11
                                             font.bold: true
                                         }
 
                                         Rectangle {
                                             Layout.fillWidth: true
-                                            height: 40
-                                            radius: 8
+                                            height: 36
+                                            radius: 6
                                             color: theme.bgInput
                                             border.color: regexInput.activeFocus ? theme.borderFocus : theme.borderSubtle
+                                            border.width: 1
                                             clip: true
 
                                             TextInput {
                                                 id: regexInput
                                                 anchors.fill: parent
-                                                anchors.leftMargin: 12
-                                                anchors.rightMargin: 12
+                                                anchors.leftMargin: 10
+                                                anchors.rightMargin: 10
                                                 verticalAlignment: TextInput.AlignVCenter
                                                 color: theme.textPrimary
-                                                font.pixelSize: 13
+                                                font.pixelSize: 12
                                                 font.family: theme.fontMono
                                                 text: "*"
                                                 selectByMouse: true
@@ -1511,10 +1540,11 @@ Rectangle {
                                     // Command Preview
                                     Rectangle {
                                         Layout.fillWidth: true
-                                        height: 38
-                                        radius: 8
+                                        height: 36
+                                        radius: 6
                                         color: theme.bgElevated
                                         border.color: theme.borderSubtle
+                                        border.width: 1
 
                                         RowLayout {
                                             anchors.fill: parent
@@ -1527,7 +1557,7 @@ Rectangle {
                                                 text: "/filter add " + (filterNameInput.text.trim().length > 0 ? filterNameInput.text.trim() : "<name>") + " " + bufferPatternInput.text.trim() + " " + tagsInput.text.trim() + " " + regexInput.text.trim()
                                                 color: theme.accentCyan
                                                 font.family: theme.fontMono
-                                                font.pixelSize: 12
+                                                font.pixelSize: 11
                                                 elide: Text.ElideRight
                                                 Layout.fillWidth: true
                                             }
@@ -1537,20 +1567,21 @@ Rectangle {
                                     // Submit Button
                                     Rectangle {
                                         Layout.alignment: Qt.AlignRight
-                                        height: 40
-                                        radius: 8
-                                        implicitWidth: addBtnText.implicitWidth + 32
+                                        height: 36
+                                        radius: 6
+                                        implicitWidth: addBtnText.implicitWidth + 28
                                         color: (filterNameInput.text.trim().length > 0)
                                             ? (addBtnHover.hovered ? theme.accentHover : theme.accentPrimary)
                                             : theme.bgElevated
                                         border.color: (filterNameInput.text.trim().length > 0) ? theme.accentPrimary : theme.borderSubtle
+                                        border.width: 1
 
                                         Text {
                                             id: addBtnText
                                             anchors.centerIn: parent
                                             text: "+ Add Custom Filter"
                                             color: (filterNameInput.text.trim().length > 0) ? theme.bgPrimary : theme.textMuted
-                                            font.pixelSize: 13
+                                            font.pixelSize: 12
                                             font.bold: true
                                         }
 
@@ -1583,12 +1614,13 @@ Rectangle {
                 Layout.fillWidth: true
                 height: 1
                 color: theme.borderSubtle
+                opacity: 0.7
             }
 
             // Footer Row: Auto-Save Switch and Done Button
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 14
+                spacing: 12
 
                 // Auto-save toggle
                 ModernSwitch {
@@ -1606,7 +1638,7 @@ Rectangle {
                         font.bold: true
                     }
                     Text {
-                        text: "Automatically writes modified filters to weechat.conf so they persist across restarts"
+                        text: "Writes modified filters to weechat.conf so rules persist across restarts"
                         color: theme.textMuted
                         font.pixelSize: 11
                     }
@@ -1614,17 +1646,58 @@ Rectangle {
 
                 Item { Layout.fillWidth: true }
 
+                // Save to WeeChat Button
                 Rectangle {
-                    width: 105
-                    height: 40
-                    radius: 8
+                    height: 36
+                    radius: 6
+                    implicitWidth: saveBtnContent.implicitWidth + 24
+                    color: filterModal.saveNoticeActive
+                        ? theme.statusOnline
+                        : (saveBtnHover.hovered ? theme.accentHover : theme.accentPrimary)
+
+                    RowLayout {
+                        id: saveBtnContent
+                        anchors.centerIn: parent
+                        spacing: 6
+
+                        Text {
+                            text: filterModal.saveNoticeActive ? "✓" : "💾"
+                            color: theme.bgPrimary
+                            font.pixelSize: 12
+                        }
+
+                        Text {
+                            text: filterModal.saveNoticeActive ? "Saved to WeeChat!" : "Save (/save)"
+                            color: theme.bgPrimary
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                    }
+
+                    HoverHandler { id: saveBtnHover }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            relayController.save_weechat_config()
+                            filterModal.saveNoticeActive = true
+                            saveNoticeTimer.restart()
+                        }
+                    }
+                }
+
+                // Done Button
+                Rectangle {
+                    width: 90
+                    height: 36
+                    radius: 6
                     color: doneHover.hovered ? theme.accentHover : theme.accentPrimary
 
                     Text {
                         anchors.centerIn: parent
                         text: "Done"
                         color: theme.bgPrimary
-                        font.pixelSize: 13
+                        font.pixelSize: 12
                         font.bold: true
                     }
 

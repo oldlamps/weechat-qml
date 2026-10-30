@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use chrono::{Local, TimeZone, Utc};
+use chrono::{Local, TimeZone};
 use qmetaobject::*;
 use tokio::sync::mpsc;
 
@@ -189,9 +189,8 @@ pub struct RelayController {
     // WeeChat Server-Side Filters
     pub request_filters: qt_method!(fn(&mut self)),
     pub toggle_weechat_filter: qt_method!(fn(&mut self, name: QString)),
-    pub add_weechat_filter: qt_method!(
-        fn(&mut self, name: QString, buffer: QString, tags: QString, regex: QString)
-    ),
+    pub add_weechat_filter:
+        qt_method!(fn(&mut self, name: QString, buffer: QString, tags: QString, regex: QString)),
     pub delete_weechat_filter: qt_method!(fn(&mut self, name: QString)),
     pub toggle_all_filters: qt_method!(fn(&mut self)),
     pub save_weechat_config: qt_method!(fn(&mut self)),
@@ -207,6 +206,8 @@ pub struct RelayController {
     cmd_tx: Option<mpsc::UnboundedSender<ClientCommand>>,
     buffers_cache: Vec<RelayBuffer>,
     filters_cache: Vec<RelayFilter>,
+    filters_version: u64,
+    buffer_filters_version: HashMap<String, u64>,
     lines_cache: HashMap<String, Vec<RelayLine>>,
     message_items_cache: HashMap<String, Vec<MessageItem>>,
     nicks_cache: HashMap<String, Vec<RelayNick>>,
@@ -216,7 +217,6 @@ pub struct RelayController {
     server_store: ServerStore,
     sidebar_server_order: Vec<String>,
     pub collapsed_servers: HashSet<String>,
-    muted_nicks: HashMap<String, i64>,
 }
 
 pub fn sort_buffers_by_server_and_number(
@@ -474,6 +474,8 @@ impl Default for RelayController {
             cmd_tx: None,
             buffers_cache: Vec::new(),
             filters_cache: Vec::new(),
+            filters_version: 0,
+            buffer_filters_version: HashMap::new(),
             lines_cache: HashMap::new(),
             message_items_cache: HashMap::new(),
             nicks_cache: HashMap::new(),
@@ -483,7 +485,6 @@ impl Default for RelayController {
             server_store: ServerStore::default(),
             sidebar_server_order: Vec::new(),
             collapsed_servers: HashSet::new(),
-            muted_nicks: HashMap::new(),
         };
         let cfg = AppConfig::load();
         controller.apply_config(&cfg);
@@ -690,27 +691,28 @@ impl RelayController {
             return;
         }
 
-        let mut existing_ptrs: HashSet<String> = entry
-            .iter()
-            .filter(|l| !l.line_ptr.is_empty() && l.line_ptr != "0x0")
-            .map(|l| l.line_ptr.clone())
-            .collect();
-
         for new_line in new_lines {
-            let already_exists = if !new_line.line_ptr.is_empty() && new_line.line_ptr != "0x0" {
-                existing_ptrs.contains(&new_line.line_ptr)
+            let existing_idx = if !new_line.line_ptr.is_empty() && new_line.line_ptr != "0x0" {
+                entry.iter().position(|l| l.line_ptr == new_line.line_ptr)
             } else {
-                entry.iter().rev().take(100).any(|existing| {
-                    existing.timestamp == new_line.timestamp
-                        && existing.prefix == new_line.prefix
-                        && existing.message == new_line.message
-                })
+                entry
+                    .iter()
+                    .rev()
+                    .take(100)
+                    .position(|existing| {
+                        existing.timestamp == new_line.timestamp
+                            && existing.prefix == new_line.prefix
+                            && existing.message == new_line.message
+                    })
+                    .map(|rev_pos| entry.len() - 1 - rev_pos)
             };
 
-            if !already_exists {
-                if !new_line.line_ptr.is_empty() && new_line.line_ptr != "0x0" {
-                    existing_ptrs.insert(new_line.line_ptr.clone());
-                }
+            if let Some(idx) = existing_idx {
+                entry[idx].displayed = new_line.displayed;
+                entry[idx].highlight = new_line.highlight;
+                entry[idx].notify_level = new_line.notify_level;
+                entry[idx].tags = new_line.tags;
+            } else {
                 entry.push(new_line);
             }
         }
@@ -780,12 +782,23 @@ impl RelayController {
                 self.rebuild_buffer_model();
             }
             RelayEvent::FiltersFetched(filters) => {
+                if let Some(f) = filters
+                    .iter()
+                    .find(|f| f.name.eq_ignore_ascii_case("join_part_quit"))
+                {
+                    let should_show = !f.enabled;
+                    if self.show_join_part_quit != should_show {
+                        self.show_join_part_quit = should_show;
+                        self.preferences_changed();
+                    }
+                }
                 self.filters_cache = filters.clone();
                 self.rebuild_filter_model();
                 self.active_filter_count = filters.iter().filter(|f| f.enabled).count() as i32;
                 self.filters_changed();
+                self.filters_version += 1;
                 self.message_items_cache.clear();
-                self.rebuild_message_model();
+                self.refetch_active_buffer_backlog();
             }
             RelayEvent::BufferLinesFetched {
                 buffer_ptr,
@@ -796,6 +809,8 @@ impl RelayController {
                 let active_str = normalize_ptr(&self.active_buffer_ptr.to_string());
                 let is_current = !active_str.is_empty() && active_str == norm_ptr;
                 self.merge_lines(&norm_ptr, lines);
+                self.buffer_filters_version
+                    .insert(norm_ptr.clone(), self.filters_version);
                 let items = self.build_items_for_buffer(&norm_ptr);
                 self.message_items_cache
                     .insert(norm_ptr.clone(), items.clone());
@@ -818,7 +833,7 @@ impl RelayController {
                     .unwrap_or(false);
 
                 // Trigger native Linux desktop notification on highlights or private messages
-                if (line.highlight || is_private) && self.desktop_notifications {
+                if line.displayed && (line.highlight || is_private) && self.desktop_notifications {
                     let buf_name = self
                         .buffers_cache
                         .iter()
@@ -866,44 +881,40 @@ impl RelayController {
                     }
 
                     if is_active {
-                        self.append_single_message_to_model(&line);
-                        self.new_message_arrived();
-                    } else if self.message_items_cache.contains_key(&buf_ptr) {
-                        let buf_full_name = self
-                            .buffers_cache
-                            .iter()
-                            .find(|b| b.ptr == buf_ptr)
-                            .map(|b| b.full_name.clone())
-                            .unwrap_or_default();
-                        if !self.is_line_filtered(&line, &buf_full_name) {
-                            let (mut prev_sender, mut prev_ts, mut prev_date_str) = {
-                                let cached = self.message_items_cache.get(&buf_ptr).unwrap();
-                                let mut s = String::new();
-                                let mut ts = 0;
-                                let mut d = String::new();
-                                if let Some(last) = cached.last() {
-                                    if !self.classic_mode && !last.is_system && !last.is_action {
-                                        s = last.prefix_plain.to_string();
-                                        ts = last.timestamp;
-                                    }
-                                    d = format_date_header(last.timestamp);
+                        if !self.is_line_filtered(&line, "") {
+                            self.append_single_message_to_model(&line);
+                            self.new_message_arrived();
+                        }
+                    } else if self.message_items_cache.contains_key(&buf_ptr)
+                        && !self.is_line_filtered(&line, "")
+                    {
+                        let (mut prev_sender, mut prev_ts, mut prev_date_str) = {
+                            let cached = self.message_items_cache.get(&buf_ptr).unwrap();
+                            let mut s = String::new();
+                            let mut ts = 0;
+                            let mut d = String::new();
+                            if let Some(last) = cached.last() {
+                                if !self.classic_mode && !last.is_system && !last.is_action {
+                                    s = last.prefix_plain.to_string();
+                                    ts = last.timestamp;
                                 }
-                                (s, ts, d)
-                            };
-                            let mut match_count = 0;
-                            let item = self.convert_line_to_item(
-                                &line,
-                                &mut prev_sender,
-                                &mut prev_ts,
-                                &mut prev_date_str,
-                                &mut match_count,
-                            );
-                            if let Some(cached) = self.message_items_cache.get_mut(&buf_ptr) {
-                                cached.push(item);
-                                if cached.len() > max_lines {
-                                    let excess = cached.len() - max_lines;
-                                    cached.drain(0..excess);
-                                }
+                                d = format_date_header(last.timestamp);
+                            }
+                            (s, ts, d)
+                        };
+                        let mut match_count = 0;
+                        let item = self.convert_line_to_item(
+                            &line,
+                            &mut prev_sender,
+                            &mut prev_ts,
+                            &mut prev_date_str,
+                            &mut match_count,
+                        );
+                        if let Some(cached) = self.message_items_cache.get_mut(&buf_ptr) {
+                            cached.push(item);
+                            if cached.len() > max_lines {
+                                let excess = cached.len() - max_lines;
+                                cached.drain(0..excess);
                             }
                         }
                     }
@@ -1372,7 +1383,8 @@ impl RelayController {
             .position(|f| f.name.eq_ignore_ascii_case(&name_str))
         {
             self.filters_cache[idx].enabled = !self.filters_cache[idx].enabled;
-            self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+            self.active_filter_count =
+                self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
             self.rebuild_filter_model();
             self.filters_changed();
         }
@@ -1382,8 +1394,8 @@ impl RelayController {
             self.filter_save_status = "Saved to WeeChat!".into();
             self.filter_save_status_changed();
         }
+        self.filters_version += 1;
         self.message_items_cache.clear();
-        self.rebuild_message_model();
         self.refetch_active_buffer_backlog();
     }
 
@@ -1433,8 +1445,8 @@ impl RelayController {
             self.filter_save_status = "Saved to WeeChat!".into();
             self.filter_save_status_changed();
         }
+        self.filters_version += 1;
         self.message_items_cache.clear();
-        self.rebuild_message_model();
         self.refetch_active_buffer_backlog();
     }
 
@@ -1443,7 +1455,8 @@ impl RelayController {
         if name_str.is_empty() {
             return;
         }
-        self.filters_cache.retain(|f| !f.name.eq_ignore_ascii_case(&name_str));
+        self.filters_cache
+            .retain(|f| !f.name.eq_ignore_ascii_case(&name_str));
         self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
         self.rebuild_filter_model();
         self.filters_changed();
@@ -1454,8 +1467,8 @@ impl RelayController {
             self.filter_save_status = "Saved to WeeChat!".into();
             self.filter_save_status_changed();
         }
+        self.filters_version += 1;
         self.message_items_cache.clear();
-        self.rebuild_message_model();
         self.refetch_active_buffer_backlog();
     }
 
@@ -1464,6 +1477,7 @@ impl RelayController {
         self.send_input("/filter toggle".into());
         self.request_filters();
         self.filters_changed();
+        self.filters_version += 1;
         self.message_items_cache.clear();
         self.rebuild_message_model();
         self.refetch_active_buffer_backlog();
@@ -1479,11 +1493,23 @@ impl RelayController {
         let id_str = preset_id.to_string();
         let (name, buffer, tags, regex, is_smart_filter) = match id_str.as_str() {
             "smart_filter" => ("irc_smart_filter", "*", "irc_smart_filter", "*", true),
-            "join_part_quit" => ("join_part_quit", "*", "irc_join,irc_part,irc_quit", "*", false),
+            "join_part_quit" => (
+                "join_part_quit",
+                "*",
+                "irc_join,irc_part,irc_quit",
+                "*",
+                false,
+            ),
             "nick_changes" => ("nick_changes", "*", "irc_nick", "*", false),
             "channel_modes" => ("channel_modes", "*", "irc_mode", "*", false),
             "topic_changes" => ("topic_changes", "*", "irc_topic", "*", false),
-            "service_bots" => ("service_bots", "*", "nick_chanserv,nick_nickserv", "*", false),
+            "service_bots" => (
+                "service_bots",
+                "*",
+                "nick_chanserv,nick_nickserv",
+                "*",
+                false,
+            ),
             _ => return,
         };
 
@@ -1521,14 +1547,16 @@ impl RelayController {
             self.filter_save_status_changed();
         }
 
+        self.filters_version += 1;
         self.message_items_cache.clear();
-        self.rebuild_message_model();
         self.refetch_active_buffer_backlog();
     }
 
     pub fn has_filter(&self, name: QString) -> bool {
         let n = name.to_string();
-        self.filters_cache.iter().any(|f| f.name.eq_ignore_ascii_case(&n))
+        self.filters_cache
+            .iter()
+            .any(|f| f.name.eq_ignore_ascii_case(&n))
     }
 
     pub fn is_filter_enabled(&self, name: QString) -> bool {
@@ -1557,26 +1585,24 @@ impl RelayController {
         if clean.is_empty() {
             return false;
         }
-        let clean_lower = clean.to_lowercase();
         let filter_name = mute_filter_name(&clean);
         let tag_match = format!("nick_{}", clean);
-        let tag_match_lower = format!("nick_{}", clean_lower);
+        let tag_match_lower = format!("nick_{}", clean.to_lowercase());
 
-        self.muted_nicks.contains_key(&clean_lower)
-            || self.filters_cache.iter().any(|f| {
-                f.enabled
-                    && (f.name.eq_ignore_ascii_case(&filter_name)
-                        || f.tags.split(',').any(|t| {
-                            let t = t.trim();
-                            t.eq_ignore_ascii_case(&tag_match)
-                                || t.eq_ignore_ascii_case(&tag_match_lower)
-                        }))
-            })
+        self.filters_cache.iter().any(|f| {
+            f.enabled
+                && (f.name.eq_ignore_ascii_case(&filter_name)
+                    || f.tags.split(',').any(|t| {
+                        let t = t.trim();
+                        t.eq_ignore_ascii_case(&tag_match)
+                            || t.eq_ignore_ascii_case(&tag_match_lower)
+                    }))
+        })
     }
 
     pub fn toggle_mute_nick(&mut self, nick: QString) {
         let clean = clean_nickname_for_filter(&nick.to_string());
-        if clean.is_empty() {
+        if clean.is_empty() || !is_valid_nick_for_mute_str(&clean) {
             return;
         }
         let clean_lower = clean.to_lowercase();
@@ -1587,17 +1613,18 @@ impl RelayController {
         let is_currently_muted = self.is_nick_muted(nick);
 
         if is_currently_muted {
-            self.muted_nicks.remove(&clean_lower);
             if let Some(idx) = self.filters_cache.iter().position(|f| {
                 f.name.eq_ignore_ascii_case(&filter_name)
                     || f.tags.split(',').any(|t| {
                         let t = t.trim();
-                        t.eq_ignore_ascii_case(&tag_match) || t.eq_ignore_ascii_case(&tag_match_lower)
+                        t.eq_ignore_ascii_case(&tag_match)
+                            || t.eq_ignore_ascii_case(&tag_match_lower)
                     })
             }) {
                 self.filters_cache[idx].enabled = false;
                 let name_to_toggle = self.filters_cache[idx].name.clone();
-                self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+                self.active_filter_count =
+                    self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
                 self.rebuild_filter_model();
                 self.filters_changed();
                 self.send_input(format!("/filter toggle {}", name_to_toggle).into());
@@ -1608,22 +1635,20 @@ impl RelayController {
                 }
             }
         } else {
-            // Mute going forward: track the timestamp so past messages are kept visible
-            let now = Utc::now().timestamp();
-            self.muted_nicks.insert(clean_lower.clone(), now);
-
             let existing_idx = self.filters_cache.iter().position(|f| {
                 f.name.eq_ignore_ascii_case(&filter_name)
                     || f.tags.split(',').any(|t| {
                         let t = t.trim();
-                        t.eq_ignore_ascii_case(&tag_match) || t.eq_ignore_ascii_case(&tag_match_lower)
+                        t.eq_ignore_ascii_case(&tag_match)
+                            || t.eq_ignore_ascii_case(&tag_match_lower)
                     })
             });
 
             if let Some(idx) = existing_idx {
                 self.filters_cache[idx].enabled = true;
                 let name_to_toggle = self.filters_cache[idx].name.clone();
-                self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+                self.active_filter_count =
+                    self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
                 self.rebuild_filter_model();
                 self.filters_changed();
                 self.send_input(format!("/filter toggle {}", name_to_toggle).into());
@@ -1640,7 +1665,8 @@ impl RelayController {
                     regex: "*".to_string(),
                     enabled: true,
                 });
-                self.active_filter_count = self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+                self.active_filter_count =
+                    self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
                 self.rebuild_filter_model();
                 self.filters_changed();
                 self.send_input(format!("/filter add {} * {} *", filter_name, tags).into());
@@ -1652,14 +1678,19 @@ impl RelayController {
                 self.filter_save_status_changed();
             }
         }
-        // Note: We intentionally do NOT clear message_items_cache, do NOT rebuild message_model,
-        // and do NOT refetch backlog. Muting applies strictly to new messages going forward.
+
+        self.filters_version += 1;
+        self.message_items_cache.clear();
+        self.refetch_active_buffer_backlog();
     }
 
     fn refetch_active_buffer_backlog(&self) {
         let active = normalize_ptr(&self.active_buffer_ptr.to_string());
         if let (false, Some(tx)) = (active.is_empty(), &self.cmd_tx) {
-            let count = self.initial_lines_fetch.clamp(50, 1000) as usize;
+            let current_count = self.lines_cache.get(&active).map(|l| l.len()).unwrap_or(0);
+            let count = current_count
+                .max(self.initial_lines_fetch as usize)
+                .clamp(50, 2000);
             let _ = tx.send(ClientCommand::FetchBufferLines {
                 buffer_ptr: active,
                 count,
@@ -1667,99 +1698,11 @@ impl RelayController {
         }
     }
 
-    fn is_line_filtered(&self, line: &RelayLine, buf_full_name: &str) -> bool {
+    fn is_line_filtered(&self, line: &RelayLine, _buf_full_name: &str) -> bool {
         if !self.filters_global_enabled {
             return false;
         }
-        if !line.displayed {
-            return true;
-        }
-        let is_join_part = line.tags.iter().any(|t| {
-            matches!(
-                t.as_str(),
-                "irc_join" | "irc_part" | "irc_quit" | "irc_nick" | "irc_smart_filter"
-            )
-        });
-        if is_join_part && !self.show_join_part_quit {
-            return true;
-        }
-
-        for filter in &self.filters_cache {
-            if !filter.enabled {
-                continue;
-            }
-            if filter.buffer != "*" && !buf_full_name.is_empty() {
-                if filter.buffer.ends_with('*') {
-                    let prefix = &filter.buffer[..filter.buffer.len() - 1];
-                    if !buf_full_name.starts_with(prefix) {
-                        continue;
-                    }
-                } else if filter.buffer != buf_full_name {
-                    continue;
-                }
-            }
-
-            let filter_tags: Vec<&str> = filter
-                .tags
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-
-            if filter_tags.is_empty() || filter.tags == "*" {
-                if filter.regex == "*" || filter.regex.is_empty() {
-                    return true;
-                }
-                let pat = filter.regex.to_lowercase();
-                if line.message.to_lowercase().contains(&pat)
-                    || line.prefix.to_lowercase().contains(&pat)
-                {
-                    return true;
-                }
-            } else {
-                let matches_tag = filter_tags.iter().any(|ft| {
-                    if ft.contains('+') {
-                        ft.split('+')
-                            .all(|part| line.tags.iter().any(|lt| lt.eq_ignore_ascii_case(part)))
-                    } else if let Some(neg) = ft.strip_prefix('!') {
-                        !line.tags.iter().any(|lt| lt.eq_ignore_ascii_case(neg))
-                    } else {
-                        let is_nick_tag = ft.starts_with("nick_");
-                        let tag_matches = line.tags.iter().any(|lt| lt.eq_ignore_ascii_case(ft))
-                            || (is_nick_tag
-                                && clean_nickname_for_filter(&strip_weechat_formatting(&line.prefix))
-                                    .eq_ignore_ascii_case(&ft["nick_".len()..]));
-
-                        if tag_matches && (is_nick_tag || filter.name.starts_with("mute_")) {
-                            let nick_key = if is_nick_tag {
-                                ft["nick_".len()..].to_lowercase()
-                            } else {
-                                filter.name["mute_".len()..].to_lowercase()
-                            };
-                            if let Some(&muted_since) = self.muted_nicks.get(&nick_key) {
-                                // Mute going forward: historical messages prior to the mute timestamp stay visible!
-                                if line.timestamp > 0 && line.timestamp < muted_since {
-                                    return false;
-                                }
-                            }
-                        }
-                        tag_matches
-                    }
-                });
-                if matches_tag {
-                    if filter.regex == "*" || filter.regex.is_empty() {
-                        return true;
-                    }
-                    let pat = filter.regex.to_lowercase();
-                    if line.message.to_lowercase().contains(&pat)
-                        || line.prefix.to_lowercase().contains(&pat)
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+        !line.displayed
     }
 
     fn rebuild_server_model(&mut self) {
@@ -1821,18 +1764,22 @@ impl RelayController {
             }
         }
 
-        // If lines are not yet cached or empty, fetch the backlog for this buffer
+        // If lines are not yet cached or empty, or if filters changed since last fetch, fetch backlog
         let needs_fetch = self
             .lines_cache
             .get(&norm_ptr)
             .map(|l| l.is_empty())
-            .unwrap_or(true);
+            .unwrap_or(true)
+            || self.buffer_filters_version.get(&norm_ptr) != Some(&self.filters_version);
         if needs_fetch && let Some(tx) = &self.cmd_tx {
-            let fetch_count = if self.initial_lines_fetch > 0 {
-                self.initial_lines_fetch as usize
-            } else {
-                150
-            };
+            let current_count = self
+                .lines_cache
+                .get(&norm_ptr)
+                .map(|l| l.len())
+                .unwrap_or(0);
+            let fetch_count = current_count
+                .max(self.initial_lines_fetch as usize)
+                .clamp(50, 2000);
             let _ = tx.send(ClientCommand::FetchBufferLines {
                 buffer_ptr: norm_ptr.clone(),
                 count: fetch_count,
@@ -2077,8 +2024,71 @@ impl RelayController {
         self.show_join_part_quit = enabled;
         self.save_current_config();
         self.preferences_changed();
+
+        let has_filter = self
+            .filters_cache
+            .iter()
+            .any(|f| f.name.eq_ignore_ascii_case("join_part_quit"));
+        let is_enabled = self
+            .filters_cache
+            .iter()
+            .any(|f| f.name.eq_ignore_ascii_case("join_part_quit") && f.enabled);
+
+        if !enabled {
+            if !is_enabled {
+                if has_filter {
+                    self.send_input("/filter toggle join_part_quit".into());
+                } else {
+                    self.send_input(
+                        "/filter add join_part_quit * irc_join,irc_part,irc_quit *".into(),
+                    );
+                }
+                if let Some(f) = self
+                    .filters_cache
+                    .iter_mut()
+                    .find(|f| f.name.eq_ignore_ascii_case("join_part_quit"))
+                {
+                    f.enabled = true;
+                } else {
+                    self.filters_cache.push(RelayFilter {
+                        name: "join_part_quit".to_string(),
+                        buffer: "*".to_string(),
+                        tags: "irc_join,irc_part,irc_quit".to_string(),
+                        regex: "*".to_string(),
+                        enabled: true,
+                    });
+                }
+                self.active_filter_count =
+                    self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+                self.rebuild_filter_model();
+                self.filters_changed();
+                if self.auto_save_weechat_filters {
+                    self.send_input("/save".into());
+                }
+            }
+        } else {
+            if is_enabled {
+                self.send_input("/filter toggle join_part_quit".into());
+                if let Some(f) = self
+                    .filters_cache
+                    .iter_mut()
+                    .find(|f| f.name.eq_ignore_ascii_case("join_part_quit"))
+                {
+                    f.enabled = false;
+                }
+                self.active_filter_count =
+                    self.filters_cache.iter().filter(|f| f.enabled).count() as i32;
+                self.rebuild_filter_model();
+                self.filters_changed();
+                if self.auto_save_weechat_filters {
+                    self.send_input("/save".into());
+                }
+            }
+        }
+
+        self.filters_version += 1;
         self.message_items_cache.clear();
-        self.rebuild_message_model();
+        self.refetch_active_buffer_backlog();
     }
 
     pub fn toggle_media_previews(&mut self) {
@@ -2771,7 +2781,9 @@ impl RelayController {
                     let s = &b.server_name;
                     self.buffers_cache
                         .iter()
-                        .find(|other| &other.server_name == s && other.local_vars.contains_key("nick"))
+                        .find(|other| {
+                            &other.server_name == s && other.local_vars.contains_key("nick")
+                        })
                         .and_then(|other| other.local_vars.get("nick").cloned())
                 })
             });
@@ -4159,7 +4171,10 @@ mod tests {
         controller.select_buffer("0x10".into());
         assert_eq!(controller.message_model.borrow().row_count(), 50);
         assert!(controller.message_items_cache.contains_key("0x10"));
-        assert_eq!(controller.message_items_cache.get("0x10").unwrap().len(), 50);
+        assert_eq!(
+            controller.message_items_cache.get("0x10").unwrap().len(),
+            50
+        );
 
         // 2. Select buffer 2: items formatted and cached for buffer 2
         controller.select_buffer("0x20".into());
@@ -4333,7 +4348,9 @@ mod tests {
         assert_eq!(controller.lines_cache.get(buf_ptr).unwrap().len(), 1500);
         assert_eq!(controller.message_model.borrow().row_count(), 1500);
         assert_eq!(
-            controller.message_model.borrow()[1499].styled_text.to_string(),
+            controller.message_model.borrow()[1499]
+                .styled_text
+                .to_string(),
             "line 1520"
         );
     }
@@ -4392,10 +4409,12 @@ mod tests {
 
         // Timestamp format change invalidates cache and rebuilds timestamps
         controller.set_timestamp_format("%H:%M:%S".into());
-        assert!(controller.message_model.borrow()[0]
-            .time_str
-            .to_string()
-            .contains(':'));
+        assert!(
+            controller.message_model.borrow()[0]
+                .time_str
+                .to_string()
+                .contains(':')
+        );
     }
 
     #[test]
@@ -4442,17 +4461,17 @@ mod tests {
         assert!(!controller.active_buffer_is_operator);
 
         // Case 2: user receives operator status (@)
-        let nicks_opped = vec![
-            RelayNick {
-                buffer_ptr: buf_ptr.to_string(),
-                group_name: "0:0".to_string(),
-                name: "myuser".to_string(),
-                prefix: "@".to_string(),
-                color: "white".to_string(),
-                visible: true,
-            },
-        ];
-        controller.nicks_cache.insert(buf_ptr.to_string(), nicks_opped);
+        let nicks_opped = vec![RelayNick {
+            buffer_ptr: buf_ptr.to_string(),
+            group_name: "0:0".to_string(),
+            name: "myuser".to_string(),
+            prefix: "@".to_string(),
+            color: "white".to_string(),
+            visible: true,
+        }];
+        controller
+            .nicks_cache
+            .insert(buf_ptr.to_string(), nicks_opped);
         controller.rebuild_nick_model();
         assert!(controller.active_buffer_is_operator);
 

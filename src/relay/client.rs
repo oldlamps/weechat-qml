@@ -441,10 +441,22 @@ async fn handle_incoming_message(
         for obj in &msg.objects {
             if let RelayValue::Infolist(inl) = obj {
                 for item in &inl.items {
-                    let name = item.get("name").map(|v| v.as_string_lossy()).unwrap_or_default();
-                    let buffer = item.get("buffer").map(|v| v.as_string_lossy()).unwrap_or_default();
-                    let tags = item.get("tags").map(|v| v.as_string_lossy()).unwrap_or_default();
-                    let regex = item.get("regex").map(|v| v.as_string_lossy()).unwrap_or_default();
+                    let name = item
+                        .get("name")
+                        .map(|v| v.as_string_lossy())
+                        .unwrap_or_default();
+                    let buffer = item
+                        .get("buffer")
+                        .map(|v| v.as_string_lossy())
+                        .unwrap_or_default();
+                    let tags = item
+                        .get("tags")
+                        .map(|v| v.as_string_lossy())
+                        .unwrap_or_default();
+                    let regex = item
+                        .get("regex")
+                        .map(|v| v.as_string_lossy())
+                        .unwrap_or_default();
                     let enabled = item.get("enabled").and_then(|v| v.as_i32()).unwrap_or(0) != 0;
                     if !name.is_empty() {
                         filters.push(RelayFilter {
@@ -467,9 +479,7 @@ async fn handle_incoming_message(
                 for item in &hda.items {
                     let mut line = parse_line_item(item);
                     line.buffer_ptr = norm_buf_ptr.clone();
-                    if line.displayed {
-                        lines.push(line);
-                    }
+                    lines.push(line);
                 }
             }
         }
@@ -487,9 +497,7 @@ async fn handle_incoming_message(
                     let mut line = parse_line_item(item);
                     line.buffer_ptr = super::types::normalize_ptr(&line.buffer_ptr);
                     line.line_ptr = super::types::normalize_ptr(&line.line_ptr);
-                    if line.displayed {
-                        let _ = event_tx.send(RelayEvent::LineAdded(line));
-                    }
+                    let _ = event_tx.send(RelayEvent::LineAdded(line));
                 }
             }
         }
