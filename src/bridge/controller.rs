@@ -63,6 +63,7 @@ pub struct RelayController {
     pub active_buffer_topic: qt_property!(QString; NOTIFY active_buffer_changed),
     pub active_buffer_nick_count: qt_property!(i32; NOTIFY nick_count_changed),
     pub active_buffer_is_operator: qt_property!(bool; NOTIFY nick_count_changed),
+    pub active_buffer_has_older: qt_property!(bool; NOTIFY active_buffer_changed),
     pub total_unread_count: qt_property!(i32; NOTIFY hotlist_summary_changed),
     pub total_highlight_count: qt_property!(i32; NOTIFY hotlist_summary_changed),
     pub search_match_count: qt_property!(i32; NOTIFY search_changed),
@@ -211,9 +212,11 @@ pub struct RelayController {
     lines_cache: HashMap<String, Vec<RelayLine>>,
     message_items_cache: HashMap<String, Vec<MessageItem>>,
     nicks_cache: HashMap<String, Vec<RelayNick>>,
+    nick_items_cache: HashMap<String, (Vec<NickItem>, bool)>,
     unread_map: HashMap<String, (i32, i32)>, // buffer_ptr -> (unread, highlight)
     buffer_filter_query: String,
     message_search_query: String,
+    active_buffer_view_limit: usize,
     server_store: ServerStore,
     sidebar_server_order: Vec<String>,
     pub collapsed_servers: HashSet<String>,
@@ -373,6 +376,7 @@ impl Default for RelayController {
             active_buffer_topic: QString::default(),
             active_buffer_nick_count: 0,
             active_buffer_is_operator: false,
+            active_buffer_has_older: false,
             total_unread_count: 0,
             total_highlight_count: 0,
             search_match_count: 0,
@@ -479,9 +483,11 @@ impl Default for RelayController {
             lines_cache: HashMap::new(),
             message_items_cache: HashMap::new(),
             nicks_cache: HashMap::new(),
+            nick_items_cache: HashMap::new(),
             unread_map: HashMap::new(),
             buffer_filter_query: String::new(),
             message_search_query: String::new(),
+            active_buffer_view_limit: 0,
             server_store: ServerStore::default(),
             sidebar_server_order: Vec::new(),
             collapsed_servers: HashSet::new(),
@@ -584,8 +590,10 @@ impl RelayController {
         self.error_message_changed();
         self.lines_cache.clear();
         self.message_items_cache.clear();
+        self.buffer_filters_version.clear();
         self.unread_map.clear();
         self.nicks_cache.clear();
+        self.nick_items_cache.clear();
         self.filters_cache.clear();
         self.filter_model.borrow_mut().reset_data(Vec::new());
         self.active_filter_count = 0;
@@ -606,6 +614,11 @@ impl RelayController {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         self.cmd_tx = Some(cmd_tx);
 
+        let initial_lines = if self.initial_lines_fetch > 0 {
+            self.initial_lines_fetch as usize
+        } else {
+            150
+        };
         let conn_cfg = ConnectionConfig {
             host: host_str,
             port: port_u16,
@@ -613,7 +626,7 @@ impl RelayController {
             use_tls,
             verify_tls,
             totp: totp.to_string(),
-            initial_lines: 120,
+            initial_lines,
         };
 
         let qptr = QPointer::from(&*self);
@@ -668,6 +681,24 @@ impl RelayController {
             150
         };
         (init * 10).clamp(1500, 5000)
+    }
+
+    fn max_view_lines(&self) -> usize {
+        let init = if self.initial_lines_fetch > 0 {
+            self.initial_lines_fetch as usize
+        } else {
+            150
+        };
+        init.clamp(100, 500)
+    }
+
+    fn min_visible_backlog(&self) -> usize {
+        let init = if self.initial_lines_fetch > 0 {
+            self.initial_lines_fetch as usize
+        } else {
+            150
+        };
+        init.clamp(40, 200)
     }
 
     fn merge_lines(&mut self, buffer_ptr: &str, new_lines: Vec<RelayLine>) {
@@ -772,6 +803,22 @@ impl RelayController {
                 } else {
                     self.select_buffer(active_norm.into());
                 }
+
+                // Queue background backlog pre-fetches for all non-active buffers after the active
+                // buffer's backlog and nicklist have been requested first, avoiding head-of-line
+                // blocking on the active buffer while keeping initial switches to other channels instant.
+                let selected_norm = normalize_ptr(&self.active_buffer_ptr.to_string());
+                let fetch_count = (self.initial_lines_fetch as usize).clamp(50, 2000);
+                if let Some(tx) = &self.cmd_tx {
+                    for b in &self.buffers_cache {
+                        if b.ptr != selected_norm {
+                            let _ = tx.send(ClientCommand::FetchBufferLines {
+                                buffer_ptr: b.ptr.clone(),
+                                count: fetch_count,
+                            });
+                        }
+                    }
+                }
             }
             RelayEvent::HotlistUpdated(map) => {
                 let mut norm_map = HashMap::with_capacity(map.len());
@@ -808,15 +855,43 @@ impl RelayController {
                 let norm_ptr = normalize_ptr(&buffer_ptr);
                 let active_str = normalize_ptr(&self.active_buffer_ptr.to_string());
                 let is_current = !active_str.is_empty() && active_str == norm_ptr;
+                let fetched_len = lines.len();
                 self.merge_lines(&norm_ptr, lines);
                 self.buffer_filters_version
                     .insert(norm_ptr.clone(), self.filters_version);
                 let items = self.build_items_for_buffer(&norm_ptr);
+                let visible_len = items.len();
                 self.message_items_cache
-                    .insert(norm_ptr.clone(), items.clone());
+                    .insert(norm_ptr.clone(), items);
                 if is_current {
-                    self.message_model.borrow_mut().reset_data(items);
+                    self.rebuild_message_model();
                     self.new_message_arrived();
+
+                    // If WeeChat filters hid most of the fetched raw lines (e.g., 145 join/part
+                    // lines out of 150 raw lines, leaving only 5 visible messages) and WeeChat
+                    // likely has older lines in the buffer, automatically fetch a deeper window
+                    // once so the channel history populates completely on startup.
+                    let min_visible = self.min_visible_backlog();
+                    let cached_raw = self
+                        .lines_cache
+                        .get(&norm_ptr)
+                        .map(|l| l.len())
+                        .unwrap_or(0);
+                    let max_lines = self.max_buffer_lines();
+                    let initial_req = (self.initial_lines_fetch as usize).max(50);
+                    if visible_len < min_visible
+                        && fetched_len >= initial_req
+                        && cached_raw < max_lines
+                        && let Some(tx) = &self.cmd_tx
+                    {
+                        let deeper_count = (cached_raw * 4).max(600).min(max_lines);
+                        if deeper_count > cached_raw {
+                            let _ = tx.send(ClientCommand::FetchBufferLines {
+                                buffer_ptr: norm_ptr,
+                                count: deeper_count,
+                            });
+                        }
+                    }
                 }
             }
             RelayEvent::LineAdded(mut line) => {
@@ -920,15 +995,39 @@ impl RelayController {
                     }
                 }
 
-                if !is_active {
-                    let entry = self.unread_map.entry(buf_ptr).or_insert((0, 0));
+                if !is_active && (line.notify_level >= 1 || line.highlight || is_private) {
+                    let entry = self.unread_map.entry(buf_ptr.clone()).or_insert((0, 0));
                     if line.notify_level >= 1 || line.highlight {
                         entry.0 += 1;
                     }
                     if line.highlight || is_private {
                         entry.1 += 1;
                     }
-                    self.rebuild_buffer_model();
+                    let (new_u, new_h) = *entry;
+                    let mut updated_in_place = false;
+                    {
+                        let mut model = self.buffer_model.borrow_mut();
+                        let count = model.row_count() as usize;
+                        for i in 0..count {
+                            if model[i].ptr.to_string() == buf_ptr {
+                                let mut item = model[i].clone();
+                                let delta_u = new_u - item.unread_count;
+                                let delta_h = new_h - item.highlight_count;
+                                item.unread_count = new_u;
+                                item.highlight_count = new_h;
+                                model.change_line(i, item);
+                                self.total_unread_count += delta_u;
+                                self.total_highlight_count += delta_h;
+                                updated_in_place = true;
+                                break;
+                            }
+                        }
+                    }
+                    if updated_in_place {
+                        self.hotlist_summary_changed();
+                    } else {
+                        self.rebuild_buffer_model();
+                    }
                 }
             }
             RelayEvent::BufferOpened(mut buf) => {
@@ -1063,6 +1162,7 @@ impl RelayController {
                 local_vars,
             } => {
                 let norm_ptr = normalize_ptr(&buffer_ptr);
+                self.nick_items_cache.remove(&norm_ptr);
                 let mut active_changed = false;
                 if let Some(b) = self.buffers_cache.iter_mut().find(|b| b.ptr == norm_ptr) {
                     b.local_vars.extend(local_vars);
@@ -1126,6 +1226,7 @@ impl RelayController {
                 self.lines_cache.remove(&norm_ptr);
                 self.message_items_cache.remove(&norm_ptr);
                 self.nicks_cache.remove(&norm_ptr);
+                self.nick_items_cache.remove(&norm_ptr);
                 self.unread_map.remove(&norm_ptr);
 
                 if is_active {
@@ -1153,6 +1254,7 @@ impl RelayController {
             RelayEvent::NicklistFull { buffer_ptr, nicks } => {
                 let norm_ptr = normalize_ptr(&buffer_ptr);
                 self.nicks_cache.insert(norm_ptr.clone(), nicks);
+                self.nick_items_cache.remove(&norm_ptr);
                 let active_str = normalize_ptr(&self.active_buffer_ptr.to_string());
                 if active_str == norm_ptr {
                     self.rebuild_nick_model();
@@ -1180,6 +1282,7 @@ impl RelayController {
                         _ => {}
                     }
                 }
+                self.nick_items_cache.remove(&norm_ptr);
                 let active_str = normalize_ptr(&self.active_buffer_ptr.to_string());
                 if active_str == norm_ptr {
                     self.rebuild_nick_model();
@@ -1687,10 +1790,21 @@ impl RelayController {
     fn refetch_active_buffer_backlog(&self) {
         let active = normalize_ptr(&self.active_buffer_ptr.to_string());
         if let (false, Some(tx)) = (active.is_empty(), &self.cmd_tx) {
-            let current_count = self.lines_cache.get(&active).map(|l| l.len()).unwrap_or(0);
-            let count = current_count
+            let current_raw = self.lines_cache.get(&active).map(|l| l.len()).unwrap_or(0);
+            let visible_count = self
+                .lines_cache
+                .get(&active)
+                .map(|lines| lines.iter().filter(|l| !self.is_line_filtered(l, "")).count())
+                .unwrap_or(0);
+            let min_visible = self.min_visible_backlog();
+            let base_count = current_raw
                 .max(self.initial_lines_fetch as usize)
                 .clamp(50, 2000);
+            let count = if current_raw >= 50 && visible_count < min_visible {
+                (base_count * 4).max(600).min(self.max_buffer_lines())
+            } else {
+                base_count
+            };
             let _ = tx.send(ClientCommand::FetchBufferLines {
                 buffer_ptr: active,
                 count,
@@ -1739,9 +1853,11 @@ impl RelayController {
             return;
         }
         let norm_ptr = normalize_ptr(&ptr_str);
+        let prev_active_ptr = normalize_ptr(&self.active_buffer_ptr.to_string());
 
         self.active_buffer_ptr = norm_ptr.clone().into();
-        self.unread_map.remove(&norm_ptr);
+        self.active_buffer_view_limit = self.max_view_lines();
+        let had_unread = self.unread_map.remove(&norm_ptr);
 
         if let Some(buf) = self.buffers_cache.iter().find(|b| b.ptr == norm_ptr) {
             self.active_buffer_name = buf.short_name.clone().into();
@@ -1764,22 +1880,35 @@ impl RelayController {
             }
         }
 
-        // If lines are not yet cached or empty, or if filters changed since last fetch, fetch backlog
-        let needs_fetch = self
+        // If lines are not yet cached or empty, if filters changed since last fetch,
+        // or if filtered lines left the visible backlog sparse despite a full initial fetch, fetch backlog
+        let raw_len = self
             .lines_cache
             .get(&norm_ptr)
-            .map(|l| l.is_empty())
-            .unwrap_or(true)
-            || self.buffer_filters_version.get(&norm_ptr) != Some(&self.filters_version);
+            .map(|l| l.len())
+            .unwrap_or(0);
+        let visible_len = self
+            .lines_cache
+            .get(&norm_ptr)
+            .map(|lines| lines.iter().filter(|l| !self.is_line_filtered(l, "")).count())
+            .unwrap_or(0);
+        let min_visible = self.min_visible_backlog();
+        let initial_req = (self.initial_lines_fetch as usize).max(50);
+        let sparse_due_to_filters = raw_len >= initial_req
+            && visible_len < min_visible
+            && raw_len < 600.min(self.max_buffer_lines());
+        let needs_fetch = raw_len == 0
+            || self.buffer_filters_version.get(&norm_ptr) != Some(&self.filters_version)
+            || sparse_due_to_filters;
         if needs_fetch && let Some(tx) = &self.cmd_tx {
-            let current_count = self
-                .lines_cache
-                .get(&norm_ptr)
-                .map(|l| l.len())
-                .unwrap_or(0);
-            let fetch_count = current_count
+            let base_count = raw_len
                 .max(self.initial_lines_fetch as usize)
                 .clamp(50, 2000);
+            let fetch_count = if raw_len >= initial_req && visible_len < min_visible {
+                (base_count * 4).max(600).min(self.max_buffer_lines())
+            } else {
+                base_count
+            };
             let _ = tx.send(ClientCommand::FetchBufferLines {
                 buffer_ptr: norm_ptr.clone(),
                 count: fetch_count,
@@ -1799,12 +1928,46 @@ impl RelayController {
                 .unwrap_or(true);
             if needs_nicks && self.active_buffer_type.to_string() == "channel" {
                 let _ = tx.send(ClientCommand::RequestNicklist {
-                    buffer_ptr: Some(norm_ptr),
+                    buffer_ptr: Some(norm_ptr.clone()),
                 });
             }
         }
 
-        self.rebuild_buffer_model();
+        // Fast O(1) in-place update on buffer_model if already populated
+        let mut updated_in_place = false;
+        {
+            let mut model = self.buffer_model.borrow_mut();
+            let count = model.row_count() as usize;
+            if count > 0 {
+                for i in 0..count {
+                    let row_ptr = model[i].ptr.to_string();
+                    if row_ptr == prev_active_ptr && prev_active_ptr != norm_ptr {
+                        let mut item = model[i].clone();
+                        if item.is_active {
+                            item.is_active = false;
+                            model.change_line(i, item);
+                        }
+                    } else if row_ptr == norm_ptr {
+                        let mut item = model[i].clone();
+                        item.is_active = true;
+                        item.unread_count = 0;
+                        item.highlight_count = 0;
+                        model.change_line(i, item);
+                        updated_in_place = true;
+                    }
+                }
+            }
+        }
+        if updated_in_place {
+            if let Some((u, h)) = had_unread {
+                self.total_unread_count = (self.total_unread_count - u).max(0);
+                self.total_highlight_count = (self.total_highlight_count - h).max(0);
+                self.hotlist_summary_changed();
+            }
+        } else {
+            self.rebuild_buffer_model();
+        }
+
         self.rebuild_message_model();
         self.rebuild_nick_model();
         self.active_buffer_changed();
@@ -2002,12 +2165,32 @@ impl RelayController {
         if active_ptr.is_empty() || active_ptr == "0x0" {
             return;
         }
+        let view_limit = if self.active_buffer_view_limit > 0 {
+            self.active_buffer_view_limit
+        } else {
+            self.max_view_lines()
+        };
+        let next_view_limit = (view_limit + 150).min(self.max_buffer_lines());
+        self.active_buffer_view_limit = next_view_limit;
+
+        let cached_count = self
+            .message_items_cache
+            .get(&active_ptr)
+            .map(|c| c.len())
+            .unwrap_or(0);
+        if cached_count > view_limit {
+            self.rebuild_message_model();
+            if cached_count >= next_view_limit {
+                return;
+            }
+        }
+
         let current_len = self
             .lines_cache
             .get(&active_ptr)
             .map(|l| l.len())
             .unwrap_or(100);
-        let next_count = current_len + 150;
+        let next_count = (current_len + 150).min(self.max_buffer_lines());
         if let Some(tx) = &self.cmd_tx {
             let _ = tx.send(ClientCommand::FetchBufferLines {
                 buffer_ptr: active_ptr,
@@ -2499,36 +2682,48 @@ impl RelayController {
         let active_ptr = normalize_ptr(&self.active_buffer_ptr.to_string());
         if active_ptr.is_empty() || active_ptr == "0x0" {
             self.message_model.borrow_mut().reset_data(Vec::new());
+            self.active_buffer_has_older = false;
             self.search_match_count = 0;
             self.search_changed();
             return;
         }
 
-        // Fast path: if formatted items are already cached for this buffer, reuse them directly!
-        if let Some(cached_items) = self.message_items_cache.get(&active_ptr) {
-            let match_count = if !self.message_search_query.is_empty() {
-                cached_items.iter().filter(|i| i.matches_search).count() as i32
+        let view_limit = if self.active_buffer_view_limit > 0 {
+            self.active_buffer_view_limit
+        } else {
+            self.max_view_lines()
+        };
+
+        if !self.message_items_cache.contains_key(&active_ptr) {
+            let items = self.build_items_for_buffer(&active_ptr);
+            self.message_items_cache.insert(active_ptr.clone(), items);
+        }
+
+        let (slice, match_count, total_cached) = {
+            let cached_items = self.message_items_cache.get(&active_ptr).unwrap();
+            let total = cached_items.len();
+            let start = total.saturating_sub(view_limit);
+            let mut slice_vec: Vec<MessageItem> = cached_items[start..].to_vec();
+            if start > 0 && let Some(first) = slice_vec.first_mut() {
+                first.is_grouped = false;
+                if first.date_header.is_empty() {
+                    first.date_header = format_date_header(first.timestamp).into();
+                }
+            }
+            let mc = if !self.message_search_query.is_empty() {
+                slice_vec.iter().filter(|i| i.matches_search).count() as i32
             } else {
                 0
             };
-            self.message_model
-                .borrow_mut()
-                .reset_data(cached_items.clone());
-            self.search_match_count = match_count;
-            self.search_changed();
-            return;
+            (slice_vec, mc, total)
+        };
+
+        let has_older = total_cached > slice.len() || slice.len() >= 50;
+        if self.active_buffer_has_older != has_older {
+            self.active_buffer_has_older = has_older;
         }
 
-        // Slow path: generate items from lines_cache, cache them, and update model
-        let items = self.build_items_for_buffer(&active_ptr);
-        self.message_items_cache
-            .insert(active_ptr.clone(), items.clone());
-        let match_count = if !self.message_search_query.is_empty() {
-            items.iter().filter(|i| i.matches_search).count() as i32
-        } else {
-            0
-        };
-        self.message_model.borrow_mut().reset_data(items);
+        self.message_model.borrow_mut().reset_data(slice);
         self.search_match_count = match_count;
         self.search_changed();
     }
@@ -2609,11 +2804,24 @@ impl RelayController {
         );
 
         let max_lines = self.max_buffer_lines();
+        let view_limit = if self.active_buffer_view_limit > 0 {
+            self.active_buffer_view_limit
+        } else {
+            self.max_view_lines()
+        };
         {
             let mut model = self.message_model.borrow_mut();
             model.push(item.clone());
-            if model.row_count() as usize > max_lines {
+            while model.row_count() as usize > view_limit {
                 model.remove(0);
+            }
+            if model.row_count() > 0 && model[0].is_grouped {
+                let mut first = model[0].clone();
+                first.is_grouped = false;
+                if first.date_header.is_empty() {
+                    first.date_header = format_date_header(first.timestamp).into();
+                }
+                model.change_line(0, first);
             }
         }
 
@@ -2733,6 +2941,24 @@ impl RelayController {
 
     fn rebuild_nick_model(&mut self) {
         let active_ptr = normalize_ptr(&self.active_buffer_ptr.to_string());
+        let is_channel = self.active_buffer_type.to_string() == "channel";
+
+        if active_ptr.is_empty() || active_ptr == "0x0" {
+            self.active_buffer_nick_count = 0;
+            self.active_buffer_is_operator = false;
+            self.nick_model.borrow_mut().reset_data(Vec::new());
+            self.nick_count_changed();
+            return;
+        }
+
+        if let Some((cached_items, cached_is_op)) = self.nick_items_cache.get(&active_ptr) {
+            self.active_buffer_nick_count = cached_items.len() as i32;
+            self.active_buffer_is_operator = is_channel && *cached_is_op;
+            self.nick_model.borrow_mut().reset_data(cached_items.clone());
+            self.nick_count_changed();
+            return;
+        }
+
         let mut raw_nicks = self
             .nicks_cache
             .get(&active_ptr)
@@ -2788,8 +3014,7 @@ impl RelayController {
                 })
             });
 
-        let is_channel = self.active_buffer_type.to_string() == "channel";
-        let is_op = if is_channel && let Some(nick) = &own_nick {
+        let is_op_in_list = if let Some(nick) = &own_nick {
             raw_nicks
                 .iter()
                 .find(|n| n.name.eq_ignore_ascii_case(nick))
@@ -2798,7 +3023,11 @@ impl RelayController {
         } else {
             false
         };
-        self.active_buffer_is_operator = is_op;
+        self.active_buffer_is_operator = is_channel && is_op_in_list;
+        if !raw_nicks.is_empty() {
+            self.nick_items_cache
+                .insert(active_ptr, (items.clone(), is_op_in_list));
+        }
 
         self.nick_model.borrow_mut().reset_data(items);
         self.nick_count_changed();
@@ -3076,1408 +3305,5 @@ pub fn open_url_with_browser(url: &str, custom_browser: &str) {
         let _ = std::process::Command::new("gio")
             .args(["open", url])
             .spawn();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sort_buffers_by_server_and_number_groups_correctly() {
-        let mut buffers = vec![
-            RelayBuffer {
-                ptr: "0x1".to_string(),
-                number: 1,
-                full_name: "core.weechat".to_string(),
-                short_name: "weechat".to_string(),
-                server_name: "WeeChat".to_string(),
-                buffer_type: "core".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x2".to_string(),
-                number: 2,
-                full_name: "irc.server.libera".to_string(),
-                short_name: "libera".to_string(),
-                server_name: "Libera".to_string(),
-                buffer_type: "server".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x3".to_string(),
-                number: 3,
-                full_name: "irc.server.oftc".to_string(),
-                short_name: "oftc".to_string(),
-                server_name: "oftc".to_string(),
-                buffer_type: "server".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x4".to_string(),
-                number: 4,
-                full_name: "irc.libera.#rust".to_string(),
-                short_name: "#rust".to_string(),
-                server_name: "libera".to_string(), // lowercase variant
-                buffer_type: "channel".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x5".to_string(),
-                number: 5,
-                full_name: "irc.oftc.#debian".to_string(),
-                short_name: "#debian".to_string(),
-                server_name: "OFTC".to_string(), // uppercase variant
-                buffer_type: "channel".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x6".to_string(),
-                number: 6,
-                full_name: "irc.libera.#python".to_string(),
-                short_name: "#python".to_string(),
-                server_name: "Libera".to_string(),
-                buffer_type: "channel".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-        ];
-
-        let mut order = Vec::new();
-        sort_buffers_by_server_and_number(&mut buffers, &mut order);
-
-        // WeeChat (number 1) should be first
-        assert_eq!(buffers[0].number, 1);
-        assert_eq!(buffers[0].server_name, "WeeChat");
-
-        // Libera (numbers 2, 4, 6) should ALL be contiguous under Libera
-        assert_eq!(buffers[1].number, 2);
-        assert_eq!(buffers[1].server_name, "Libera");
-        assert_eq!(buffers[2].number, 4);
-        assert_eq!(buffers[2].server_name, "Libera");
-        assert_eq!(buffers[3].number, 6);
-        assert_eq!(buffers[3].server_name, "Libera");
-
-        // OFTC (numbers 3, 5) should ALL be contiguous under OFTC
-        assert_eq!(buffers[4].number, 3);
-        assert_eq!(buffers[4].server_name, "OFTC");
-        assert_eq!(buffers[5].number, 5);
-        assert_eq!(buffers[5].server_name, "OFTC");
-
-        // Order should be saved as ["weechat", "libera", "oftc"]
-        assert_eq!(order, vec!["weechat", "libera", "oftc"]);
-    }
-
-    #[test]
-    fn test_persistent_server_order_on_new_channel_join() {
-        let mut buffers = vec![
-            RelayBuffer {
-                ptr: "0x1".to_string(),
-                number: 1,
-                full_name: "core.weechat".to_string(),
-                short_name: "weechat".to_string(),
-                server_name: "WeeChat".to_string(),
-                buffer_type: "core".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x2".to_string(),
-                number: 2,
-                full_name: "irc.libera.#rust".to_string(),
-                short_name: "#rust".to_string(),
-                server_name: "Libera".to_string(),
-                buffer_type: "channel".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x3".to_string(),
-                number: 3,
-                full_name: "irc.oftc.#debian".to_string(),
-                short_name: "#debian".to_string(),
-                server_name: "OFTC".to_string(),
-                buffer_type: "channel".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-        ];
-
-        let mut order = Vec::new();
-        sort_buffers_by_server_and_number(&mut buffers, &mut order);
-        assert_eq!(order, vec!["weechat", "libera", "oftc"]);
-
-        // Simulate joining a new channel on OFTC where buffer number is initially 0 (not yet assigned)
-        buffers.push(RelayBuffer {
-            ptr: "0x4".to_string(),
-            number: 0, // Freshly opened, no number yet
-            full_name: "irc.oftc.#kernel".to_string(),
-            short_name: "#kernel".to_string(),
-            server_name: "OFTC".to_string(),
-            buffer_type: "channel".to_string(),
-            title: String::new(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        });
-
-        sort_buffers_by_server_and_number(&mut buffers, &mut order);
-
-        // Crucial invariant: OFTC must NOT move above Libera or WeeChat!
-        assert_eq!(buffers[0].server_name, "WeeChat");
-        assert_eq!(buffers[1].server_name, "Libera");
-        assert_eq!(buffers[1].short_name, "#rust");
-        assert_eq!(buffers[2].server_name, "OFTC");
-        assert_eq!(buffers[2].short_name, "#debian");
-        assert_eq!(buffers[3].server_name, "OFTC");
-        assert_eq!(buffers[3].short_name, "#kernel");
-        assert_eq!(order, vec!["weechat", "libera", "oftc"]);
-
-        // Now simulate WeeChat updating the number to 4 via BufferMoved/BufferUpdated
-        buffers[3].number = 4;
-        sort_buffers_by_server_and_number(&mut buffers, &mut order);
-        assert_eq!(buffers[0].server_name, "WeeChat");
-        assert_eq!(buffers[1].server_name, "Libera");
-        assert_eq!(buffers[2].server_name, "OFTC");
-        assert_eq!(buffers[3].server_name, "OFTC");
-        assert_eq!(buffers[3].number, 4);
-    }
-
-    #[test]
-    fn test_select_buffer_by_filtered_index_and_number_filtering() {
-        let mut controller = RelayController::default();
-        let buffers = vec![
-            RelayBuffer {
-                ptr: "0x1".to_string(),
-                number: 1,
-                full_name: "core.weechat".to_string(),
-                short_name: "weechat".to_string(),
-                server_name: "WeeChat".to_string(),
-                buffer_type: "core".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x2".to_string(),
-                number: 2,
-                full_name: "irc.libera.#rust".to_string(),
-                short_name: "#rust".to_string(),
-                server_name: "Libera".to_string(),
-                buffer_type: "channel".to_string(),
-                title: "Rust programming".to_string(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x3".to_string(),
-                number: 3,
-                full_name: "irc.oftc.#debian".to_string(),
-                short_name: "#debian".to_string(),
-                server_name: "OFTC".to_string(),
-                buffer_type: "channel".to_string(),
-                title: "Debian linux".to_string(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-        ];
-
-        controller.handle_relay_event(RelayEvent::BuffersListed(buffers));
-
-        // When unfiltered, index 1 corresponds to #rust (ptr 0x2)
-        assert!(controller.select_buffer_by_filtered_index(1));
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x2");
-        assert_eq!(controller.active_buffer_name.to_string(), "#rust");
-
-        // Filter by number "3" (e.g. typing "3" in Ctrl+K dialog)
-        controller.filter_buffers("3".into());
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.iter().count(), 1);
-            assert_eq!(
-                model.iter().next().unwrap().short_name.to_string(),
-                "#debian"
-            );
-        }
-        assert!(controller.select_buffer_by_filtered_index(0));
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
-
-        // Invalid index returns false safely
-        assert!(!controller.select_buffer_by_filtered_index(99));
-        assert!(!controller.select_buffer_by_filtered_index(-1));
-    }
-
-    #[test]
-    fn test_merge_lines_preserves_backlog_and_live_messages() {
-        let mut controller = RelayController::default();
-        let buf_ptr = "0x55aa";
-
-        // Suppose 1 live message arrived
-        let live_msg = RelayLine {
-            buffer_ptr: buf_ptr.to_string(),
-            line_ptr: "0xline2".to_string(),
-            timestamp: 1002,
-            displayed: true,
-            prefix: "alice".to_string(),
-            message: "hello live".to_string(),
-            highlight: false,
-            notify_level: 1,
-            tags: vec![],
-        };
-        controller.handle_relay_event(RelayEvent::LineAdded(live_msg));
-
-        // Now backlog arrives from WeeChat with an older message and the same live message
-        let backlog_msg1 = RelayLine {
-            buffer_ptr: buf_ptr.to_string(),
-            line_ptr: "0xline1".to_string(),
-            timestamp: 1001,
-            displayed: true,
-            prefix: "bob".to_string(),
-            message: "older backlog message".to_string(),
-            highlight: false,
-            notify_level: 1,
-            tags: vec![],
-        };
-        let backlog_msg2 = RelayLine {
-            buffer_ptr: buf_ptr.to_string(),
-            line_ptr: "0xline2".to_string(),
-            timestamp: 1002,
-            displayed: true,
-            prefix: "alice".to_string(),
-            message: "hello live".to_string(),
-            highlight: false,
-            notify_level: 1,
-            tags: vec![],
-        };
-        controller.handle_relay_event(RelayEvent::BufferLinesFetched {
-            buffer_ptr: "55AA".to_string(), // different case and no 0x prefix
-            lines: vec![backlog_msg1, backlog_msg2],
-            prepend: false,
-        });
-
-        // Verify lines cache: should have 2 unique messages, sorted by timestamp
-        let cached = controller.lines_cache.get("0x55aa").unwrap();
-        assert_eq!(cached.len(), 2);
-        assert_eq!(cached[0].message, "older backlog message");
-        assert_eq!(cached[1].message, "hello live");
-
-        // Now suppose WeeChat returns empty lines for an empty query - it must NOT wipe out existing content
-        controller.handle_relay_event(RelayEvent::BufferLinesFetched {
-            buffer_ptr: "0x55aa".to_string(),
-            lines: vec![],
-            prepend: false,
-        });
-        let cached_after_empty = controller.lines_cache.get("0x55aa").unwrap();
-        assert_eq!(cached_after_empty.len(), 2);
-    }
-
-    #[test]
-    fn test_newly_created_channel_lifecycle_and_classification() {
-        let mut controller = RelayController::default();
-
-        // 1. Initial connect listbuffers with core and server buffers
-        controller.handle_relay_event(RelayEvent::BuffersListed(vec![
-            RelayBuffer {
-                ptr: "0x1".to_string(),
-                number: 1,
-                full_name: "core.weechat".to_string(),
-                short_name: "weechat".to_string(),
-                server_name: "WeeChat".to_string(),
-                buffer_type: "core".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-            RelayBuffer {
-                ptr: "0x2".to_string(),
-                number: 2,
-                full_name: "irc.server.libera".to_string(),
-                short_name: "libera".to_string(),
-                server_name: "Libera".to_string(),
-                buffer_type: "server".to_string(),
-                title: String::new(),
-                notify_level: 0,
-                local_vars: HashMap::new(),
-            },
-        ]));
-
-        // 2. User joins a new channel "#rust".
-        // WeeChat fires _buffer_opened before short_name or local_variables are populated.
-        let raw_item = RelayBuffer {
-            ptr: "0x100".to_string(),
-            number: 3,
-            full_name: "irc.libera.#rust".to_string(),
-            short_name: extract_short_name("irc.libera.#rust", ""),
-            server_name: extract_server_name("irc.libera.#rust", &HashMap::new()),
-            buffer_type: determine_buffer_type("irc.libera.#rust", "#rust", &HashMap::new()),
-            title: String::new(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-
-        controller.handle_relay_event(RelayEvent::BufferOpened(raw_item));
-
-        // Immediately upon buffer open, it MUST be classified as a channel with #rust as short_name!
-        let buf = controller
-            .buffers_cache
-            .iter()
-            .find(|b| b.ptr == "0x100")
-            .unwrap();
-        assert_eq!(buf.buffer_type, "channel");
-        assert_eq!(buf.short_name, "#rust");
-        assert_eq!(buf.server_name, "Libera");
-
-        // 3. User selects the new buffer
-        controller.select_buffer("0x100".into());
-        assert_eq!(controller.active_buffer_type.to_string(), "channel");
-        assert_eq!(controller.active_buffer_name.to_string(), "#rust");
-
-        // 4. WeeChat emits _buffer_renamed
-        controller.handle_relay_event(RelayEvent::BufferRenamed {
-            buffer_ptr: "0x100".to_string(),
-            full_name: "irc.libera.#rust".to_string(),
-            short_name: "#rust".to_string(),
-        });
-        assert_eq!(controller.active_buffer_type.to_string(), "channel");
-        assert_eq!(controller.active_buffer_name.to_string(), "#rust");
-
-        // 5. WeeChat emits _buffer_localvar_added
-        let mut local_vars = HashMap::new();
-        local_vars.insert("type".to_string(), "channel".to_string());
-        local_vars.insert("channel".to_string(), "#rust".to_string());
-        local_vars.insert("server".to_string(), "libera".to_string());
-        controller.handle_relay_event(RelayEvent::BufferLocalVarsUpdated {
-            buffer_ptr: "0x100".to_string(),
-            local_vars,
-        });
-
-        let updated_buf = controller
-            .buffers_cache
-            .iter()
-            .find(|b| b.ptr == "0x100")
-            .unwrap();
-        assert_eq!(updated_buf.buffer_type, "channel");
-        assert_eq!(updated_buf.server_name, "Libera");
-        assert_eq!(controller.active_buffer_type.to_string(), "channel");
-        assert_eq!(controller.active_buffer_server.to_string(), "Libera");
-    }
-
-    #[test]
-    fn test_controller_settings_setters_and_persistence() {
-        let mut controller = RelayController::default();
-
-        controller.set_font_size(18);
-        assert_eq!(controller.font_size, 18);
-
-        controller.set_theme("Tokyo Night".into());
-        assert_eq!(controller.theme_name.to_string(), "Tokyo Night");
-
-        controller.set_desktop_notifications(false);
-        assert!(!controller.desktop_notifications);
-
-        controller.set_show_media_previews(false);
-        assert!(!controller.show_media_previews);
-
-        controller.set_show_join_part_quit(true);
-        assert!(controller.show_join_part_quit);
-
-        controller.set_timestamp_format("%H:%M:%S".into());
-        assert_eq!(controller.timestamp_format.to_string(), "%H:%M:%S");
-
-        controller.set_initial_lines_fetch(250);
-        assert_eq!(controller.initial_lines_fetch, 250);
-
-        controller.set_auto_reconnect(false);
-        assert!(!controller.auto_reconnect);
-
-        controller.set_confirm_on_quit(false);
-        assert!(!controller.confirm_on_quit);
-
-        controller.set_close_to_tray(false);
-        assert!(!controller.close_to_tray);
-
-        controller.set_custom_browser("firefox --new-tab".into());
-        assert_eq!(controller.custom_browser.to_string(), "firefox --new-tab");
-
-        controller.set_classic_mode(true);
-        assert!(controller.classic_mode);
-
-        controller.set_alternating_row_colors(false);
-        assert!(!controller.alternating_row_colors);
-
-        // Verify that AppConfig::load() reflects these saved settings
-        let loaded = AppConfig::load();
-        assert_eq!(loaded.font_size, 18);
-        assert_eq!(loaded.theme_name, "Tokyo Night");
-        assert!(!loaded.desktop_notifications);
-        assert!(!loaded.show_media_previews);
-        assert!(loaded.show_join_part_quit);
-        assert_eq!(loaded.timestamp_format, "%H:%M:%S");
-        assert_eq!(loaded.initial_lines_fetch, 250);
-        assert!(!loaded.auto_reconnect);
-        assert!(!loaded.confirm_on_quit);
-        assert!(!loaded.close_to_tray);
-        assert_eq!(loaded.custom_browser, "firefox --new-tab");
-        assert!(loaded.classic_mode);
-        assert!(!loaded.alternating_row_colors);
-
-        // Verify that instantiating a new RelayController::default() immediately loads these values
-        let mut new_controller = RelayController::default();
-        assert_eq!(new_controller.font_size, 18);
-        assert_eq!(new_controller.theme_name.to_string(), "Tokyo Night");
-        assert!(!new_controller.desktop_notifications);
-        assert!(!new_controller.show_media_previews);
-        assert!(new_controller.classic_mode);
-        assert!(!new_controller.alternating_row_colors);
-        assert!(new_controller.show_join_part_quit);
-        assert_eq!(new_controller.timestamp_format.to_string(), "%H:%M:%S");
-        assert_eq!(new_controller.initial_lines_fetch, 250);
-        assert!(!new_controller.auto_reconnect);
-        assert!(!new_controller.confirm_on_quit);
-        assert!(!new_controller.close_to_tray);
-        assert_eq!(
-            new_controller.custom_browser.to_string(),
-            "firefox --new-tab"
-        );
-
-        // Verify toggles flip values, save them, and init_controller preserves them
-        new_controller.toggle_desktop_notifications();
-        assert!(new_controller.desktop_notifications);
-        new_controller.toggle_alternating_row_colors();
-        assert!(new_controller.alternating_row_colors);
-        new_controller.toggle_join_part_quit();
-        assert!(!new_controller.show_join_part_quit);
-        new_controller.toggle_confirm_on_quit();
-        assert!(new_controller.confirm_on_quit);
-        new_controller.toggle_close_to_tray();
-        assert!(new_controller.close_to_tray);
-
-        let reloaded_cfg = AppConfig::load();
-        assert!(reloaded_cfg.desktop_notifications);
-        assert!(reloaded_cfg.alternating_row_colors);
-        assert!(!reloaded_cfg.show_join_part_quit);
-        assert!(reloaded_cfg.confirm_on_quit);
-        assert!(reloaded_cfg.close_to_tray);
-
-        let mut restarted_controller = RelayController::default();
-        restarted_controller.init_controller();
-        assert!(restarted_controller.desktop_notifications);
-        assert!(restarted_controller.alternating_row_colors);
-        assert!(!restarted_controller.show_join_part_quit);
-        assert!(restarted_controller.confirm_on_quit);
-        assert!(restarted_controller.close_to_tray);
-        assert_eq!(
-            restarted_controller.custom_browser.to_string(),
-            "firefox --new-tab"
-        );
-    }
-
-    #[test]
-    fn test_classic_mode_disables_message_grouping() {
-        let mut controller = RelayController::default();
-        let buf_ptr = "0x1234abcd".to_string();
-        controller.active_buffer_ptr = buf_ptr.clone().into();
-
-        let line1 = RelayLine {
-            line_ptr: "0xline1".to_string(),
-            buffer_ptr: buf_ptr.clone(),
-            timestamp: 1700000000,
-            notify_level: 0,
-            displayed: true,
-            highlight: false,
-            tags: vec!["irc_privmsg".to_string()],
-            prefix: "alice".to_string(),
-            message: "First message from alice".to_string(),
-        };
-
-        let line2 = RelayLine {
-            line_ptr: "0xline2".to_string(),
-            buffer_ptr: buf_ptr.clone(),
-            timestamp: 1700000010,
-            notify_level: 0,
-            displayed: true,
-            highlight: false,
-            tags: vec!["irc_privmsg".to_string()],
-            prefix: "alice".to_string(),
-            message: "Second burst message from alice".to_string(),
-        };
-
-        controller
-            .lines_cache
-            .insert(buf_ptr.clone(), vec![line1.clone(), line2.clone()]);
-
-        // Modern mode: consecutive lines from the same nick within 300s are grouped
-        controller.set_classic_mode(false);
-        {
-            let model = controller.message_model.borrow();
-            assert_eq!(model.row_count(), 2);
-            assert!(!model[0].is_grouped);
-            assert!(model[1].is_grouped);
-        }
-
-        // Classic mode: every line preserves its nick and is NOT grouped
-        controller.set_classic_mode(true);
-        {
-            let model = controller.message_model.borrow();
-            assert_eq!(model.row_count(), 2);
-            assert!(!model[0].is_grouped);
-            assert!(!model[1].is_grouped);
-        }
-    }
-
-    #[test]
-    fn test_split_command_args_various_formats() {
-        assert_eq!(split_command_args(""), Vec::<String>::new());
-        assert_eq!(split_command_args("   "), Vec::<String>::new());
-        assert_eq!(split_command_args("firefox"), vec!["firefox"]);
-        assert_eq!(
-            split_command_args("firefox --new-tab"),
-            vec!["firefox", "--new-tab"]
-        );
-        assert_eq!(
-            split_command_args("flatpak run org.mozilla.firefox"),
-            vec!["flatpak", "run", "org.mozilla.firefox"]
-        );
-        assert_eq!(
-            split_command_args(r#""/opt/custom browser/bin" --flag="value with space""#),
-            vec!["/opt/custom browser/bin", "--flag=value with space"]
-        );
-        assert_eq!(
-            split_command_args(r#"'single quoted' regular"#),
-            vec!["single quoted", "regular"]
-        );
-    }
-
-    #[test]
-    fn test_sync_buffer_model_preserves_rows_and_in_place_updates() {
-        let mut controller = RelayController::default();
-
-        let b1 = RelayBuffer {
-            ptr: "0x1".to_string(),
-            number: 1,
-            full_name: "irc.server.libera".to_string(),
-            short_name: "libera".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "server".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b2 = RelayBuffer {
-            ptr: "0x2".to_string(),
-            number: 2,
-            full_name: "irc.libera.#rust".to_string(),
-            short_name: "#rust".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "Rust Channel".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b3 = RelayBuffer {
-            ptr: "0x3".to_string(),
-            number: 3,
-            full_name: "irc.libera.#general".to_string(),
-            short_name: "#general".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "General Channel".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-
-        // 1. Initial buffer list
-        controller.handle_relay_event(RelayEvent::BuffersListed(vec![
-            b1.clone(),
-            b2.clone(),
-            b3.clone(),
-        ]));
-
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.row_count(), 3);
-            assert_eq!(model[0].ptr.to_string(), "0x1");
-            assert_eq!(model[1].ptr.to_string(), "0x2");
-            assert_eq!(model[2].ptr.to_string(), "0x3");
-            // First channel buffer is automatically selected on initial buffer list
-            assert!(model[1].is_active);
-            assert!(!model[2].is_active);
-        }
-
-        // 2. Select buffer 3
-        controller.select_buffer("0x3".into());
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.row_count(), 3);
-            assert_eq!(model[0].ptr.to_string(), "0x1");
-            assert!(!model[0].is_active);
-            assert_eq!(model[1].ptr.to_string(), "0x2");
-            assert!(!model[1].is_active);
-            assert_eq!(model[2].ptr.to_string(), "0x3");
-            assert!(model[2].is_active);
-        }
-
-        // 3. Live message arrives on inactive buffer 2 (#rust)
-        let live_msg = RelayLine {
-            line_ptr: "0xmsg1".to_string(),
-            buffer_ptr: "0x2".to_string(),
-            timestamp: 1700000000,
-            prefix: "alice".to_string(),
-            message: "hello rust".to_string(),
-            tags: vec!["irc_privmsg".to_string()],
-            displayed: true,
-            highlight: false,
-            notify_level: 1,
-        };
-        controller.handle_relay_event(RelayEvent::LineAdded(live_msg));
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.row_count(), 3);
-            assert_eq!(model[1].ptr.to_string(), "0x2");
-            assert_eq!(model[1].unread_count, 1);
-            assert_eq!(model[2].unread_count, 0);
-            assert!(model[2].is_active);
-        }
-
-        // 4. Hotlist update from WeeChat
-        let mut hotlist_map = HashMap::new();
-        hotlist_map.insert("0x3".to_string(), (5, 1));
-        controller.handle_relay_event(RelayEvent::HotlistUpdated(hotlist_map));
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.row_count(), 3);
-            assert_eq!(model[2].unread_count, 5);
-            assert_eq!(model[2].highlight_count, 1);
-        }
-
-        // 5. Open new buffer (#tokio)
-        let b4 = RelayBuffer {
-            ptr: "0x4".to_string(),
-            number: 4,
-            full_name: "irc.libera.#tokio".to_string(),
-            short_name: "#tokio".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        controller.handle_relay_event(RelayEvent::BufferOpened(b4));
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.row_count(), 4);
-        }
-
-        // 6. Close buffer 3
-        controller.handle_relay_event(RelayEvent::BufferClosed {
-            buffer_ptr: "0x3".to_string(),
-            full_name: "irc.libera.#general".to_string(),
-        });
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.row_count(), 3);
-            assert!((0..model.row_count()).all(|i| model[i as usize].ptr.to_string() != "0x3"));
-        }
-
-        // 7. Filter buffers
-        controller.filter_buffers("tokio".into());
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.row_count(), 1);
-            assert_eq!(model[0].ptr.to_string(), "0x4");
-        }
-
-        controller.filter_buffers("".into());
-        {
-            let model = controller.buffer_model.borrow();
-            assert_eq!(model.row_count(), 3);
-        }
-    }
-
-    #[test]
-    fn test_collapsible_server_sections_and_persistence() {
-        let mut controller = RelayController::default();
-        controller.collapsed_servers.clear();
-
-        let b1 = RelayBuffer {
-            ptr: "0x1".to_string(),
-            number: 1,
-            full_name: "irc.server.libera".to_string(),
-            short_name: "libera".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "server".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b2 = RelayBuffer {
-            ptr: "0x2".to_string(),
-            number: 2,
-            full_name: "irc.libera.#rust".to_string(),
-            short_name: "#rust".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b3 = RelayBuffer {
-            ptr: "0x3".to_string(),
-            number: 3,
-            full_name: "irc.oftc.#debian".to_string(),
-            short_name: "#debian".to_string(),
-            server_name: "OFTC".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-
-        controller.handle_relay_event(RelayEvent::BuffersListed(vec![b1, b2, b3]));
-
-        // Check buffer counts per server
-        assert_eq!(controller.server_buffer_count("Libera".into()), 2);
-        assert_eq!(controller.server_buffer_count("OFTC".into()), 1);
-
-        // Populate unread and highlights
-        let mut hotlist = HashMap::new();
-        hotlist.insert("0x1".to_string(), (2, 0));
-        hotlist.insert("0x2".to_string(), (3, 1));
-        hotlist.insert("0x3".to_string(), (4, 2));
-        controller.handle_relay_event(RelayEvent::HotlistUpdated(hotlist));
-
-        // Aggregated unread / highlight count per server
-        assert_eq!(controller.server_unread_count("Libera".into()), 5);
-        assert_eq!(controller.server_highlight_count("Libera".into()), 1);
-        assert_eq!(controller.server_unread_count("OFTC".into()), 4);
-        assert_eq!(controller.server_highlight_count("OFTC".into()), 2);
-
-        // Initially not collapsed
-        assert!(!controller.is_server_collapsed("Libera".into()));
-        assert!(!controller.is_server_collapsed("libera".into()));
-
-        // Toggle Libera collapsed
-        assert!(controller.toggle_server_collapsed("Libera".into()));
-        assert!(controller.is_server_collapsed("Libera".into()));
-        assert!(controller.is_server_collapsed("libera".into())); // case-insensitive
-
-        let collapsed_list = controller.get_collapsed_servers();
-        assert_eq!(collapsed_list.len(), 1);
-
-        // Toggle Libera expanded again
-        assert!(!controller.toggle_server_collapsed("libera".into()));
-        assert!(!controller.is_server_collapsed("Libera".into()));
-
-        // Explicit set
-        controller.set_server_collapsed("OFTC".into(), true);
-        assert!(controller.is_server_collapsed("OFTC".into()));
-
-        // Test persistence through config
-        let cfg = AppConfig {
-            collapsed_servers: controller.collapsed_servers.iter().cloned().collect(),
-            ..Default::default()
-        };
-        let mut reloaded_controller = RelayController::default();
-        reloaded_controller.apply_config(&cfg);
-        assert!(reloaded_controller.is_server_collapsed("OFTC".into()));
-        assert!(!reloaded_controller.is_server_collapsed("Libera".into()));
-    }
-
-    #[test]
-    fn test_should_show_server_manager_on_startup_conditions() {
-        let mut controller = RelayController::default();
-
-        // 1. First run / no profile or profile without auto_connect
-        controller.server_store.servers.clear();
-        controller.server_store.active_server_id = None;
-        assert!(controller.should_show_server_manager_on_startup());
-
-        let p1 = ServerProfile {
-            id: "srv1".to_string(),
-            name: "Libera".to_string(),
-            host: "irc.libera.chat".to_string(),
-            port: 9000,
-            use_tls: true,
-            verify_tls: true,
-            save_password: true,
-            auto_connect: false,
-            totp: String::new(),
-        };
-        controller.server_store.servers.push(p1);
-        controller.server_store.active_server_id = Some("srv1".to_string());
-        controller.active_server_has_password = true;
-
-        // Auto-connect is false -> should show server manager on startup
-        assert!(controller.should_show_server_manager_on_startup());
-
-        // 2. Profile has auto_connect: true, but NO password saved
-        controller.server_store.servers[0].auto_connect = true;
-        controller.active_server_has_password = false;
-        assert!(controller.should_show_server_manager_on_startup());
-
-        // 3. Profile has auto_connect: true AND password saved
-        controller.active_server_has_password = true;
-        assert!(!controller.should_show_server_manager_on_startup());
-    }
-
-    #[test]
-    fn test_copy_to_clipboard_safe_in_headless_tests() {
-        let controller = RelayController::default();
-        // Should execute cleanly without panic even when no GUI clipboard is available in unit test
-        controller.copy_to_clipboard("test message text".into());
-    }
-
-    #[test]
-    fn test_select_next_unread_buffer_cyclic_navigation() {
-        let mut controller = RelayController::default();
-
-        let b1 = RelayBuffer {
-            ptr: "0x1".to_string(),
-            number: 1,
-            full_name: "irc.libera.#rust".to_string(),
-            short_name: "#rust".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b2 = RelayBuffer {
-            ptr: "0x2".to_string(),
-            number: 2,
-            full_name: "irc.libera.#tokio".to_string(),
-            short_name: "#tokio".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b3 = RelayBuffer {
-            ptr: "0x3".to_string(),
-            number: 3,
-            full_name: "irc.libera.#weechat".to_string(),
-            short_name: "#weechat".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-
-        controller.buffers_cache = vec![b1, b2, b3];
-        controller.select_buffer("0x1".into());
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
-
-        // Set unreads: b2 has regular unread (3), b3 has highlight (1)
-        controller.unread_map.insert("0x2".to_string(), (3, 0));
-        controller.unread_map.insert("0x3".to_string(), (1, 1));
-
-        // 1. Highlight priority: b3 should be selected first even though b2 is next in order
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
-        assert!(!controller.unread_map.contains_key("0x3"));
-
-        // 2. Next unread: b2 is now the only unread buffer
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x2");
-        assert!(!controller.unread_map.contains_key("0x2"));
-
-        // 3. No unreads remaining: calling select_next_unread_buffer stays on b2
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x2");
-
-        // 4. Test cyclic wrap-around:
-        // Currently on b2 ("0x2"). Both b1 ("0x1") and b3 ("0x3") have unread messages.
-        controller.unread_map.insert("0x1".to_string(), (5, 0));
-        controller.unread_map.insert("0x3".to_string(), (2, 0));
-
-        // Starting after b2, cyclic check visits b3 first before wrapping around to b1!
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
-
-        // From b3, wrapping around visits b1
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
-    }
-
-    #[test]
-    fn test_select_next_unread_buffer_across_multiple_servers() {
-        let mut controller = RelayController::default();
-
-        let b1 = RelayBuffer {
-            ptr: "0x1".to_string(),
-            number: 1,
-            full_name: "irc.libera.#rust".to_string(),
-            short_name: "#rust".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b2 = RelayBuffer {
-            ptr: "0x2".to_string(),
-            number: 2,
-            full_name: "irc.libera.#tokio".to_string(),
-            short_name: "#tokio".to_string(),
-            server_name: "Libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b3_server = RelayBuffer {
-            ptr: "0x3".to_string(),
-            number: 3,
-            full_name: "irc.server.oftc".to_string(),
-            short_name: "oftc".to_string(),
-            server_name: "OFTC".to_string(),
-            buffer_type: "server".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b4 = RelayBuffer {
-            ptr: "0x4".to_string(),
-            number: 4,
-            full_name: "irc.oftc.#debian".to_string(),
-            short_name: "#debian".to_string(),
-            server_name: "OFTC".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-
-        controller.buffers_cache = vec![b1, b2, b3_server, b4];
-        controller.collapsed_servers.insert("OFTC".to_string());
-        controller.select_buffer("0x1".into());
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
-        assert!(controller.is_server_collapsed("OFTC".into()));
-
-        // Libera #tokio (0x2) has unread 1; OFTC raw server (0x3) has unread notice 1; OFTC #debian (0x4) has unread 2
-        controller.unread_map.insert("0x2".to_string(), (1, 0));
-        controller.unread_map.insert("0x3".to_string(), (1, 0));
-        controller.unread_map.insert("0x4".to_string(), (2, 0));
-
-        // 1. First jump from #rust on Libera goes to #tokio on Libera
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x2");
-        assert_eq!(controller.active_buffer_server.to_string(), "Libera");
-        assert!(!controller.unread_map.contains_key("0x2"));
-
-        // 2. Second jump from #tokio on Libera jumps across servers to #debian on OFTC (prioritizing chat channels over raw server log 0x3!)
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x4");
-        assert_eq!(controller.active_buffer_name.to_string(), "#debian");
-        assert_eq!(controller.active_buffer_server.to_string(), "OFTC");
-        assert!(!controller.unread_map.contains_key("0x4"));
-
-        // Selecting #debian on OFTC auto-expanded OFTC
-        assert!(!controller.is_server_collapsed("OFTC".into()));
-
-        // 3. Third jump visits raw server log 0x3 (the only buffer left with unread)
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
-
-        // 4. Now all buffers are read. Further calls do not change buffer
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x3");
-
-        // 5. Simulate new message arriving on Libera (#rust: 0x1)
-        controller.unread_map.insert("0x1".to_string(), (3, 0));
-        // Calling select_next_unread_buffer jumps from OFTC (0x3) back to Libera (0x1)!
-        controller.select_next_unread_buffer();
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x1");
-        assert_eq!(controller.active_buffer_server.to_string(), "Libera");
-    }
-
-    #[test]
-    fn test_message_items_cache_and_fast_buffer_switching() {
-        let mut controller = RelayController::default();
-        let b1 = RelayBuffer {
-            ptr: "0x10".to_string(),
-            number: 1,
-            full_name: "irc.server.#chan1".to_string(),
-            short_name: "#chan1".to_string(),
-            server_name: "server".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b2 = RelayBuffer {
-            ptr: "0x20".to_string(),
-            number: 2,
-            full_name: "irc.server.#chan2".to_string(),
-            short_name: "#chan2".to_string(),
-            server_name: "server".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        controller.buffers_cache = vec![b1, b2];
-
-        // Populate lines_cache for both buffers
-        let lines1 = (0..50)
-            .map(|i| RelayLine {
-                buffer_ptr: "0x10".to_string(),
-                line_ptr: format!("0xline1_{}", i),
-                timestamp: 1000 + i,
-                prefix: "alice".to_string(),
-                message: format!("Message {} in chan1", i),
-                tags: vec!["irc_privmsg".to_string()],
-                displayed: true,
-                highlight: false,
-                notify_level: 0,
-            })
-            .collect();
-        let lines2 = (0..50)
-            .map(|i| RelayLine {
-                buffer_ptr: "0x20".to_string(),
-                line_ptr: format!("0xline2_{}", i),
-                timestamp: 2000 + i,
-                prefix: "bob".to_string(),
-                message: format!("Message {} in chan2", i),
-                tags: vec!["irc_privmsg".to_string()],
-                displayed: true,
-                highlight: false,
-                notify_level: 0,
-            })
-            .collect();
-
-        controller.lines_cache.insert("0x10".to_string(), lines1);
-        controller.lines_cache.insert("0x20".to_string(), lines2);
-
-        // Initially message_items_cache is empty
-        assert!(controller.message_items_cache.is_empty());
-
-        // 1. Select buffer 1: items should be formatted and cached
-        controller.select_buffer("0x10".into());
-        assert_eq!(controller.message_model.borrow().row_count(), 50);
-        assert!(controller.message_items_cache.contains_key("0x10"));
-        assert_eq!(
-            controller.message_items_cache.get("0x10").unwrap().len(),
-            50
-        );
-
-        // 2. Select buffer 2: items formatted and cached for buffer 2
-        controller.select_buffer("0x20".into());
-        assert_eq!(controller.message_model.borrow().row_count(), 50);
-        assert!(controller.message_items_cache.contains_key("0x20"));
-
-        // 3. Switch back to buffer 1: reused directly from message_items_cache
-        controller.select_buffer("0x10".into());
-        assert_eq!(controller.message_model.borrow().row_count(), 50);
-        assert_eq!(
-            controller.message_model.borrow()[0].styled_text.to_string(),
-            "Message 0 in chan1"
-        );
-    }
-
-    #[test]
-    fn test_background_buffer_incremental_caching() {
-        let mut controller = RelayController::default();
-        let b1 = RelayBuffer {
-            ptr: "0x100".to_string(),
-            number: 1,
-            full_name: "irc.server.#active".to_string(),
-            short_name: "#active".to_string(),
-            server_name: "server".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        let b2 = RelayBuffer {
-            ptr: "0x200".to_string(),
-            number: 2,
-            full_name: "irc.server.#background".to_string(),
-            short_name: "#background".to_string(),
-            server_name: "server".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        };
-        controller.buffers_cache = vec![b1, b2];
-
-        // Seed backlog for both
-        controller.handle_relay_event(RelayEvent::BufferLinesFetched {
-            buffer_ptr: "0x100".to_string(),
-            lines: vec![RelayLine {
-                buffer_ptr: "0x100".to_string(),
-                line_ptr: "0xL1".to_string(),
-                timestamp: 100,
-                prefix: "alice".to_string(),
-                message: "active msg 1".to_string(),
-                tags: vec!["irc_privmsg".to_string()],
-                displayed: true,
-                highlight: false,
-                notify_level: 0,
-            }],
-            prepend: false,
-        });
-
-        controller.handle_relay_event(RelayEvent::BufferLinesFetched {
-            buffer_ptr: "0x200".to_string(),
-            lines: vec![RelayLine {
-                buffer_ptr: "0x200".to_string(),
-                line_ptr: "0xL2".to_string(),
-                timestamp: 100,
-                prefix: "bob".to_string(),
-                message: "bg msg 1".to_string(),
-                tags: vec!["irc_privmsg".to_string()],
-                displayed: true,
-                highlight: false,
-                notify_level: 0,
-            }],
-            prepend: false,
-        });
-
-        // Activate 0x100
-        controller.select_buffer("0x100".into());
-        assert_eq!(controller.active_buffer_ptr.to_string(), "0x100");
-
-        // Incoming live message for background buffer 0x200
-        controller.handle_relay_event(RelayEvent::LineAdded(RelayLine {
-            buffer_ptr: "0x200".to_string(),
-            line_ptr: "0xL3".to_string(),
-            timestamp: 200,
-            prefix: "charlie".to_string(),
-            message: "bg live message".to_string(),
-            tags: vec!["irc_privmsg".to_string()],
-            displayed: true,
-            highlight: false,
-            notify_level: 0,
-        }));
-
-        // Background buffer cached items was incrementally updated!
-        let cached_bg = controller.message_items_cache.get("0x200").unwrap();
-        assert_eq!(cached_bg.len(), 2);
-        assert_eq!(cached_bg[1].styled_text.to_string(), "bg live message");
-
-        // When switching to 0x200, model instantly reflects the 2 messages without bulk conversion
-        controller.select_buffer("0x200".into());
-        assert_eq!(controller.message_model.borrow().row_count(), 2);
-        assert_eq!(
-            controller.message_model.borrow()[1].styled_text.to_string(),
-            "bg live message"
-        );
-    }
-
-    #[test]
-    fn test_max_buffer_lines_capping_and_ring_buffer() {
-        let mut controller = RelayController::default();
-        controller.set_initial_lines_fetch(150);
-        let max_lines = controller.max_buffer_lines();
-        assert_eq!(max_lines, 1500);
-
-        let buf_ptr = "0x999";
-        controller.buffers_cache = vec![RelayBuffer {
-            ptr: buf_ptr.to_string(),
-            number: 1,
-            full_name: "irc.server.#overflow".to_string(),
-            short_name: "#overflow".to_string(),
-            server_name: "server".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        }];
-
-        controller.select_buffer(buf_ptr.into());
-
-        // Feed 1520 lines into the buffer
-        let new_lines: Vec<RelayLine> = (0..1520)
-            .map(|i| RelayLine {
-                buffer_ptr: buf_ptr.to_string(),
-                line_ptr: format!("0xline_{}", i),
-                timestamp: 1000 + i,
-                prefix: "user".to_string(),
-                message: format!("line {}", i),
-                tags: vec!["irc_privmsg".to_string()],
-                displayed: true,
-                highlight: false,
-                notify_level: 0,
-            })
-            .collect();
-
-        controller.handle_relay_event(RelayEvent::BufferLinesFetched {
-            buffer_ptr: buf_ptr.to_string(),
-            lines: new_lines,
-            prepend: false,
-        });
-
-        // lines_cache and model must be capped at 1500, preserving newest
-        let lines = controller.lines_cache.get(buf_ptr).unwrap();
-        assert_eq!(lines.len(), 1500);
-        assert_eq!(lines[0].message, "line 20");
-        assert_eq!(lines[1499].message, "line 1519");
-
-        assert_eq!(controller.message_model.borrow().row_count(), 1500);
-
-        // Add 1 more live line: model and cache stay at 1500
-        controller.handle_relay_event(RelayEvent::LineAdded(RelayLine {
-            buffer_ptr: buf_ptr.to_string(),
-            line_ptr: "0xline_1520".to_string(),
-            timestamp: 1000 + 1520,
-            prefix: "user".to_string(),
-            message: "line 1520".to_string(),
-            tags: vec!["irc_privmsg".to_string()],
-            displayed: true,
-            highlight: false,
-            notify_level: 0,
-        }));
-
-        assert_eq!(controller.lines_cache.get(buf_ptr).unwrap().len(), 1500);
-        assert_eq!(controller.message_model.borrow().row_count(), 1500);
-        assert_eq!(
-            controller.message_model.borrow()[1499]
-                .styled_text
-                .to_string(),
-            "line 1520"
-        );
-    }
-
-    #[test]
-    fn test_settings_change_invalidates_message_items_cache() {
-        let mut controller = RelayController::default();
-        let buf_ptr = "0x55";
-        controller.buffers_cache = vec![RelayBuffer {
-            ptr: buf_ptr.to_string(),
-            number: 1,
-            full_name: "irc.server.#test".to_string(),
-            short_name: "#test".to_string(),
-            server_name: "server".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars: HashMap::new(),
-        }];
-
-        let lines = vec![
-            RelayLine {
-                buffer_ptr: buf_ptr.to_string(),
-                line_ptr: "0x1".to_string(),
-                timestamp: 1700000000,
-                prefix: "alice".to_string(),
-                message: "hello 1".to_string(),
-                tags: vec!["irc_privmsg".to_string()],
-                displayed: true,
-                highlight: false,
-                notify_level: 0,
-            },
-            RelayLine {
-                buffer_ptr: buf_ptr.to_string(),
-                line_ptr: "0x2".to_string(),
-                timestamp: 1700000010,
-                prefix: "alice".to_string(),
-                message: "hello 2".to_string(),
-                tags: vec!["irc_privmsg".to_string()],
-                displayed: true,
-                highlight: false,
-                notify_level: 0,
-            },
-        ];
-        controller.lines_cache.insert(buf_ptr.to_string(), lines);
-        controller.set_classic_mode(false);
-        controller.select_buffer(buf_ptr.into());
-
-        // Initially in modern mode, line 2 is grouped
-        assert!(controller.message_model.borrow()[1].is_grouped);
-        assert!(controller.message_items_cache.contains_key(buf_ptr));
-
-        // Switch to classic mode: cache is invalidated and rebuilt, is_grouped becomes false
-        controller.set_classic_mode(true);
-        assert!(!controller.message_model.borrow()[1].is_grouped);
-
-        // Timestamp format change invalidates cache and rebuilds timestamps
-        controller.set_timestamp_format("%H:%M:%S".into());
-        assert!(
-            controller.message_model.borrow()[0]
-                .time_str
-                .to_string()
-                .contains(':')
-        );
-    }
-
-    #[test]
-    fn test_active_buffer_operator_detection() {
-        let mut controller = RelayController::default();
-        let buf_ptr = "0x99";
-        let mut local_vars = HashMap::new();
-        local_vars.insert("nick".to_string(), "myuser".to_string());
-        local_vars.insert("type".to_string(), "channel".to_string());
-
-        controller.buffers_cache = vec![RelayBuffer {
-            ptr: buf_ptr.to_string(),
-            number: 1,
-            full_name: "irc.libera.#channel".to_string(),
-            short_name: "#channel".to_string(),
-            server_name: "libera".to_string(),
-            buffer_type: "channel".to_string(),
-            title: "".to_string(),
-            notify_level: 0,
-            local_vars,
-        }];
-
-        // Case 1: user is a regular user (no op prefix)
-        let nicks = vec![
-            RelayNick {
-                buffer_ptr: buf_ptr.to_string(),
-                group_name: "3:0".to_string(),
-                name: "myuser".to_string(),
-                prefix: " ".to_string(),
-                color: "white".to_string(),
-                visible: true,
-            },
-            RelayNick {
-                buffer_ptr: buf_ptr.to_string(),
-                group_name: "0:0".to_string(),
-                name: "admin".to_string(),
-                prefix: "@".to_string(),
-                color: "red".to_string(),
-                visible: true,
-            },
-        ];
-        controller.nicks_cache.insert(buf_ptr.to_string(), nicks);
-        controller.select_buffer(buf_ptr.into());
-        assert!(!controller.active_buffer_is_operator);
-
-        // Case 2: user receives operator status (@)
-        let nicks_opped = vec![RelayNick {
-            buffer_ptr: buf_ptr.to_string(),
-            group_name: "0:0".to_string(),
-            name: "myuser".to_string(),
-            prefix: "@".to_string(),
-            color: "white".to_string(),
-            visible: true,
-        }];
-        controller
-            .nicks_cache
-            .insert(buf_ptr.to_string(), nicks_opped);
-        controller.rebuild_nick_model();
-        assert!(controller.active_buffer_is_operator);
-
-        // Case 3: non-channel buffer (e.g. private query) is never operator
-        controller.active_buffer_type = "private".into();
-        controller.rebuild_nick_model();
-        assert!(!controller.active_buffer_is_operator);
     }
 }

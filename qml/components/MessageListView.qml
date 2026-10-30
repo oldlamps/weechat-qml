@@ -7,6 +7,7 @@ Item {
 
     property var relayController
     property var theme
+    property bool bottomScrollPending: false
     signal mentionNickRequested(string nick)
     signal expandMediaRequested(string mediaType, string mediaUrl, string streamUrl, string audioUrl, string title, real position, bool isPlaying)
 
@@ -47,12 +48,15 @@ Item {
         if (listView.count === 0) return
         listView.autoScroll = true
         listView.positionViewAtEnd()
-        Qt.callLater(function() {
-            if (listView.autoScroll && listView.count > 0) {
-                listView.positionViewAtIndex(listView.count - 1, ListView.End)
-                listView.positionViewAtEnd()
-            }
-        })
+        if (!feedRoot.bottomScrollPending) {
+            feedRoot.bottomScrollPending = true
+            Qt.callLater(function() {
+                feedRoot.bottomScrollPending = false
+                if (listView.autoScroll && listView.count > 0) {
+                    listView.positionViewAtEnd()
+                }
+            })
+        }
     }
 
     ListView {
@@ -61,6 +65,8 @@ Item {
         clip: true
         model: relayController.message_model
         spacing: 0
+        cacheBuffer: 600
+        reuseItems: true
         topMargin: relayController.classic_mode ? 4 : 12
         bottomMargin: relayController.classic_mode ? 4 : 14
         boundsBehavior: Flickable.StopAtBounds
@@ -146,10 +152,11 @@ Item {
         // Older message loader header
         header: Item {
             width: listView.width
-            height: listView.count >= 50 ? 44 : 8
+            readonly property bool canLoadOlder: listView.count >= 50 || (relayController && relayController.active_buffer_has_older)
+            height: canLoadOlder ? 44 : 8
 
             Rectangle {
-                visible: listView.count >= 50
+                visible: parent.canLoadOlder
                 anchors.centerIn: parent
                 implicitWidth: loadMoreLbl.implicitWidth + 24
                 height: 28
@@ -170,7 +177,10 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: relayController.load_more_history()
+                    onClicked: {
+                        listView.autoScroll = false
+                        relayController.load_more_history()
+                    }
                 }
             }
         }

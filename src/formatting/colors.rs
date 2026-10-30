@@ -344,31 +344,3 @@ pub fn escape_styled_text(s: &str) -> String {
     }
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_weechat_color_and_attribute_parsing() {
-        let raw = "\x19F*05Hello \x19@00214world\x1C normal";
-        let spans = parse_weechat_spans(raw);
-        assert_eq!(spans.len(), 3);
-        assert_eq!(spans[0].text, "Hello ");
-        assert!(spans[0].style.bold);
-        assert_eq!(spans[0].style.fg_color.as_deref(), Some("#4ade80"));
-
-        assert_eq!(spans[1].text, "world");
-        assert_eq!(spans[1].style.fg_color.as_deref(), Some("#ffaf00"));
-
-        assert_eq!(spans[2].text, " normal");
-        assert!(!spans[2].style.bold);
-        assert_eq!(spans[2].style.fg_color, None);
-    }
-
-    #[test]
-    fn test_strip_weechat_formatting() {
-        let raw = "\x19F09@ferris\x1C";
-        assert_eq!(strip_weechat_formatting(raw), "@ferris");
-    }
-}

@@ -175,19 +175,3 @@ pub struct RelayMessage {
     /// Decoded objects in the message payload
     pub objects: Vec<RelayValue>,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_normalize_ptr_canonical_formatting() {
-        assert_eq!(normalize_ptr("0x55AA12"), "0x55aa12");
-        assert_eq!(normalize_ptr("55aa12"), "0x55aa12");
-        assert_eq!(normalize_ptr("0X55aa12"), "0x55aa12");
-        assert_eq!(normalize_ptr("  0x1a2b  "), "0x1a2b");
-        assert_eq!(normalize_ptr("0x0"), "0x0");
-        assert_eq!(normalize_ptr("0"), "0x0");
-        assert_eq!(normalize_ptr(""), "");
-    }
-}

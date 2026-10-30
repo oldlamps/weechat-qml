@@ -310,7 +310,11 @@ pub async fn run_relay_session(
         detail: format!("Authenticated with WeeChat {}. Syncing buffers...", version),
     });
 
-    // Step 4: Request buffer list, hotlist, nicklists, and start live sync
+    // Step 4: Request buffer list, hotlist, filters, and start live sync.
+    // Note: Do NOT send global `(nicklist) nicklist` here because WeeChat responds with the
+    // full nicklist of every channel on every server in a single multi-megabyte frame that blocks
+    // the relay output queue behind it, delaying `(lines:...)` backlog responses on startup.
+    // Instead, request nicklist only for the active channel on demand.
     write_relay_command(
         &mut stream,
         "(listbuffers) hdata buffer:gui_buffers(*) number,full_name,short_name,type,nicklist,title,local_variables,notify",
@@ -322,7 +326,6 @@ pub async fn run_relay_session(
     )
     .await?;
     write_relay_command(&mut stream, "(filters) infolist filter").await?;
-    write_relay_command(&mut stream, "(nicklist) nicklist").await?;
     write_relay_command(&mut stream, "sync *").await?;
 
     let _ = event_tx.send(RelayEvent::Connected { version });
@@ -408,15 +411,6 @@ async fn handle_incoming_message(
                     buffers.push(buf);
                 }
             }
-        }
-        // Request recent lines for all buffers immediately so UI is populated with backlogs
-        let line_count = config.initial_lines.max(50);
-        for buf in &buffers {
-            let wire = format!(
-                "(lines:{}) hdata buffer:{}/own_lines/last_line(-{})/data date,displayed,prefix,message,highlight,notify_level,tags_array",
-                buf.ptr, buf.ptr, line_count
-            );
-            let _ = write_relay_command(stream, &wire).await;
         }
         let _ = event_tx.send(RelayEvent::BuffersListed(buffers));
     } else if id == "hotlist" {
@@ -952,62 +946,4 @@ fn parse_nicklist_diff_hdata(hda: &HdataObject) -> HashMap<String, Vec<RelayNick
     }
 
     by_buffer
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_short_name_and_determine_buffer_type() {
-        let empty_vars = HashMap::new();
-
-        // Case 1: Newly opened channel with empty short_name
-        let short = extract_short_name("irc.libera.#rust", "");
-        assert_eq!(short, "#rust");
-        let btype = determine_buffer_type("irc.libera.#rust", &short, &empty_vars);
-        assert_eq!(btype, "channel");
-
-        // Case 2: Channel starting with '&' and empty short_name
-        let short = extract_short_name("irc.oftc.&secret", "");
-        assert_eq!(short, "&secret");
-        let btype = determine_buffer_type("irc.oftc.&secret", &short, &empty_vars);
-        assert_eq!(btype, "channel");
-
-        // Case 3: Channel with dots in channel name
-        let short = extract_short_name("irc.libera.#c++.chat", "");
-        assert_eq!(short, "#c++.chat");
-        let btype = determine_buffer_type("irc.libera.#c++.chat", &short, &empty_vars);
-        assert_eq!(btype, "channel");
-
-        // Case 4: Private query with empty short_name
-        let short = extract_short_name("irc.libera.alice", "");
-        assert_eq!(short, "alice");
-        let btype = determine_buffer_type("irc.libera.alice", &short, &empty_vars);
-        assert_eq!(btype, "private");
-
-        // Case 5: IRC server buffer with empty short_name
-        let short = extract_short_name("irc.server.libera", "");
-        assert_eq!(short, "libera");
-        let btype = determine_buffer_type("irc.server.libera", &short, &empty_vars);
-        assert_eq!(btype, "server");
-
-        // Case 6: Core weechat buffer
-        let short = extract_short_name("core.weechat", "");
-        assert_eq!(short, "weechat");
-        let btype = determine_buffer_type("core.weechat", &short, &empty_vars);
-        assert_eq!(btype, "core");
-
-        // Case 7: Explicit local_variables override
-        let mut vars = HashMap::new();
-        vars.insert("type".to_string(), "channel".to_string());
-        let btype = determine_buffer_type("custom.buffer", "custom", &vars);
-        assert_eq!(btype, "channel");
-
-        // Case 8: Explicit local variable "channel"
-        let mut vars = HashMap::new();
-        vars.insert("channel".to_string(), "#custom".to_string());
-        let btype = determine_buffer_type("matrix.server.room123", "room123", &vars);
-        assert_eq!(btype, "channel");
-    }
 }

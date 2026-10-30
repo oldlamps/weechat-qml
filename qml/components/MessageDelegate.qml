@@ -66,6 +66,20 @@ Item {
 
     Component.onCompleted: fetchMediaMetadata()
 
+    readonly property string rowLinePtr: model.line_ptr
+    onRowLinePtrChanged: {
+        previewCollapsed = false
+        isInlinePlaying = false
+        inlineStreamUrl = ""
+        inlineAudioUrl = ""
+        isResolvingStream = false
+        resolveError = ""
+        ytTitle = ""
+        ytAuthor = ""
+        resolvedImageUrl = ""
+        fetchMediaMetadata()
+    }
+
     // Shared Inline Media Preview Component (Used in both Modern and Compact Classic view modes)
     component MediaPreviewBlock: ColumnLayout {
         id: mediaBlockRoot
@@ -91,17 +105,17 @@ Item {
         }
 
         function requestExpandVideo() {
-            if (msgRoot.inlineStreamUrl.length > 0) {
-                var wasPlaying = inlinePlayer.playbackState === MediaPlayer.PlayingState
-                inlinePlayer.pause()
-                if (msgRoot.inlineAudioUrl.length > 0) inlineAudioPlayer.pause()
+            if (msgRoot.inlineStreamUrl.length > 0 && inlinePlayerLoader.item) {
+                var wasPlaying = inlinePlayerLoader.item.isPlaying
+                var pos = inlinePlayerLoader.item.currentPosition
+                inlinePlayerLoader.item.pausePlayback()
                 msgRoot.expandMediaRequested(
                     "youtube",
                     model.media_url,
                     msgRoot.inlineStreamUrl,
                     msgRoot.inlineAudioUrl,
                     msgRoot.ytTitle.length > 0 ? msgRoot.ytTitle : model.media_url,
-                    inlinePlayer.position,
+                    pos,
                     wasPlaying
                 )
             } else {
@@ -119,6 +133,7 @@ Item {
 
         Connections {
             target: relayController
+            enabled: mediaBlockRoot.visible && (msgRoot.isResolvingStream || msgRoot.isInlinePlaying)
             function onMedia_stream_resolved(target_id, stream_url, audio_url) {
                 if (target_id === model.line_ptr && mediaBlockRoot.visible) {
                     msgRoot.isResolvingStream = false
@@ -126,10 +141,6 @@ Item {
                     msgRoot.inlineStreamUrl = stream_url
                     msgRoot.inlineAudioUrl = audio_url || ""
                     msgRoot.isInlinePlaying = true
-                    inlinePlayer.play()
-                    if (msgRoot.inlineAudioUrl.length > 0) {
-                        inlineAudioPlayer.play()
-                    }
                 }
             }
             function onMedia_stream_error(target_id, error_msg) {
@@ -554,173 +565,195 @@ Item {
                         }
                     }
 
-                    // Inline Video Player Mode
-                    Item {
+                    // Inline Video Player Mode (Lazy-loaded ONLY when actively playing)
+                    Loader {
+                        id: inlinePlayerLoader
                         anchors.fill: parent
+                        active: msgRoot.isInlinePlaying
                         visible: msgRoot.isInlinePlaying
 
-                        MediaPlayer {
-                            id: inlinePlayer
-                            videoOutput: videoOut
-                            audioOutput: msgRoot.inlineAudioUrl.length === 0 ? primaryAudioOut : null
-                            source: msgRoot.inlineStreamUrl
-
-                            onPlaybackStateChanged: {
-                                if (msgRoot.inlineAudioUrl.length > 0) {
-                                    if (inlinePlayer.playbackState === MediaPlayer.PlayingState &&
-                                        inlineAudioPlayer.playbackState !== MediaPlayer.PlayingState) {
-                                        inlineAudioPlayer.play()
-                                    } else if (inlinePlayer.playbackState === MediaPlayer.PausedState &&
-                                               inlineAudioPlayer.playbackState !== MediaPlayer.PausedState) {
-                                        inlineAudioPlayer.pause()
-                                    } else if (inlinePlayer.playbackState === MediaPlayer.StoppedState &&
-                                               inlineAudioPlayer.playbackState !== MediaPlayer.StoppedState) {
-                                        inlineAudioPlayer.stop()
-                                    }
-                                }
-                            }
-
-                            onPositionChanged: {
-                                if (msgRoot.inlineAudioUrl.length > 0 && inlinePlayer.playbackState === MediaPlayer.PlayingState) {
-                                    var diff = Math.abs(inlinePlayer.position - inlineAudioPlayer.position)
-                                    if (diff > 350) {
-                                        inlineAudioPlayer.position = inlinePlayer.position
-                                    }
-                                }
-                            }
-                        }
-
-                        AudioOutput {
-                            id: primaryAudioOut
-                        }
-
-                        // Secondary audio player for YouTube DASH streams
-                        MediaPlayer {
-                            id: inlineAudioPlayer
-                            audioOutput: separateAudioOut
-                            source: msgRoot.inlineAudioUrl
-                        }
-
-                        AudioOutput {
-                            id: separateAudioOut
-                        }
-
-                        VideoOutput {
-                            id: videoOut
+                        sourceComponent: Item {
                             anchors.fill: parent
-                        }
+                            readonly property bool isPlaying: inlinePlayer.playbackState === MediaPlayer.PlayingState
+                            readonly property real currentPosition: inlinePlayer.position
 
-                        // Video Controls Bar (bottom overlay)
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            height: 36
-                            color: "#dd000000"
+                            function pausePlayback() {
+                                inlinePlayer.pause()
+                                if (msgRoot.inlineAudioUrl.length > 0) inlineAudioPlayer.pause()
+                            }
 
-                            RowLayout {
+                            Component.onCompleted: {
+                                if (msgRoot.inlineStreamUrl.length > 0) {
+                                    inlinePlayer.play()
+                                    if (msgRoot.inlineAudioUrl.length > 0) {
+                                        inlineAudioPlayer.play()
+                                    }
+                                }
+                            }
+
+                            MediaPlayer {
+                                id: inlinePlayer
+                                videoOutput: videoOut
+                                audioOutput: msgRoot.inlineAudioUrl.length === 0 ? primaryAudioOut : null
+                                source: msgRoot.inlineStreamUrl
+
+                                onPlaybackStateChanged: {
+                                    if (msgRoot.inlineAudioUrl.length > 0) {
+                                        if (inlinePlayer.playbackState === MediaPlayer.PlayingState &&
+                                            inlineAudioPlayer.playbackState !== MediaPlayer.PlayingState) {
+                                            inlineAudioPlayer.play()
+                                        } else if (inlinePlayer.playbackState === MediaPlayer.PausedState &&
+                                                   inlineAudioPlayer.playbackState !== MediaPlayer.PausedState) {
+                                            inlineAudioPlayer.pause()
+                                        } else if (inlinePlayer.playbackState === MediaPlayer.StoppedState &&
+                                                   inlineAudioPlayer.playbackState !== MediaPlayer.StoppedState) {
+                                            inlineAudioPlayer.stop()
+                                        }
+                                    }
+                                }
+
+                                onPositionChanged: {
+                                    if (msgRoot.inlineAudioUrl.length > 0 && inlinePlayer.playbackState === MediaPlayer.PlayingState) {
+                                        var diff = Math.abs(inlinePlayer.position - inlineAudioPlayer.position)
+                                        if (diff > 350) {
+                                            inlineAudioPlayer.position = inlinePlayer.position
+                                        }
+                                    }
+                                }
+                            }
+
+                            AudioOutput {
+                                id: primaryAudioOut
+                            }
+
+                            // Secondary audio player for YouTube DASH streams
+                            MediaPlayer {
+                                id: inlineAudioPlayer
+                                audioOutput: separateAudioOut
+                                source: msgRoot.inlineAudioUrl
+                            }
+
+                            AudioOutput {
+                                id: separateAudioOut
+                            }
+
+                            VideoOutput {
+                                id: videoOut
                                 anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                spacing: 8
+                            }
 
-                                Text {
-                                    text: inlinePlayer.playbackState === MediaPlayer.PlayingState ? "⏸" : "▶"
-                                    color: "#ffffff"
-                                    font.pixelSize: 14
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            if (inlinePlayer.playbackState === MediaPlayer.PlayingState) {
-                                                inlinePlayer.pause()
-                                                if (msgRoot.inlineAudioUrl.length > 0) {
-                                                    inlineAudioPlayer.pause()
-                                                }
-                                            } else {
-                                                inlinePlayer.play()
-                                                if (msgRoot.inlineAudioUrl.length > 0) {
-                                                    inlineAudioPlayer.play()
+                            // Video Controls Bar (bottom overlay)
+                            Rectangle {
+                                anchors.bottom: parent.bottom
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                height: 36
+                                color: "#dd000000"
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    spacing: 8
+
+                                    Text {
+                                        text: inlinePlayer.playbackState === MediaPlayer.PlayingState ? "⏸" : "▶"
+                                        color: "#ffffff"
+                                        font.pixelSize: 14
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (inlinePlayer.playbackState === MediaPlayer.PlayingState) {
+                                                    inlinePlayer.pause()
+                                                    if (msgRoot.inlineAudioUrl.length > 0) {
+                                                        inlineAudioPlayer.pause()
+                                                    }
+                                                } else {
+                                                    inlinePlayer.play()
+                                                    if (msgRoot.inlineAudioUrl.length > 0) {
+                                                        inlineAudioPlayer.play()
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                Slider {
-                                    Layout.fillWidth: true
-                                    from: 0
-                                    to: Math.max(1, inlinePlayer.duration)
-                                    value: inlinePlayer.position
-                                    onMoved: {
-                                        inlinePlayer.position = value
-                                        if (msgRoot.inlineAudioUrl.length > 0) {
-                                            inlineAudioPlayer.position = value
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    text: {
-                                        var curS = Math.floor(inlinePlayer.position / 1000)
-                                        var totS = Math.floor(inlinePlayer.duration / 1000)
-                                        var curM = Math.floor(curS / 60)
-                                        var totM = Math.floor(totS / 60)
-                                        return curM + ":" + (curS % 60 < 10 ? "0" : "") + (curS % 60) + " / " + totM + ":" + (totS % 60 < 10 ? "0" : "") + (totS % 60)
-                                    }
-                                    color: "#ffffff"
-                                    font.pixelSize: 10
-                                    font.family: theme.fontMono
-                                }
-
-                                // Fullscreen / Expand button
-                                Rectangle {
-                                    width: 26
-                                    height: 26
-                                    radius: 4
-                                    color: expInlHover.hovered ? "#44ffffff" : "transparent"
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "⛶"
-                                        color: "#ffffff"
-                                        font.pixelSize: 13
-                                    }
-
-                                    HoverHandler { id: expInlHover }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: mediaBlockRoot.requestExpandVideo()
-                                    }
-                                }
-
-                                // Close inline player button
-                                Rectangle {
-                                    width: 26
-                                    height: 26
-                                    radius: 4
-                                    color: closeInlHover.hovered ? "#44ffffff" : "transparent"
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "✕"
-                                        color: "#ffffff"
-                                        font.pixelSize: 12
-                                    }
-
-                                    HoverHandler { id: closeInlHover }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            inlinePlayer.stop()
+                                    Slider {
+                                        Layout.fillWidth: true
+                                        from: 0
+                                        to: Math.max(1, inlinePlayer.duration)
+                                        value: inlinePlayer.position
+                                        onMoved: {
+                                            inlinePlayer.position = value
                                             if (msgRoot.inlineAudioUrl.length > 0) {
-                                                inlineAudioPlayer.stop()
+                                                inlineAudioPlayer.position = value
                                             }
-                                            msgRoot.isInlinePlaying = false
-                                            msgRoot.inlineStreamUrl = ""
-                                            msgRoot.inlineAudioUrl = ""
+                                        }
+                                    }
+
+                                    Text {
+                                        text: {
+                                            var curS = Math.floor(inlinePlayer.position / 1000)
+                                            var totS = Math.floor(inlinePlayer.duration / 1000)
+                                            var curM = Math.floor(curS / 60)
+                                            var totM = Math.floor(totS / 60)
+                                            return curM + ":" + (curS % 60 < 10 ? "0" : "") + (curS % 60) + " / " + totM + ":" + (totS % 60 < 10 ? "0" : "") + (totS % 60)
+                                        }
+                                        color: "#ffffff"
+                                        font.pixelSize: 10
+                                        font.family: theme.fontMono
+                                    }
+
+                                    // Fullscreen / Expand button
+                                    Rectangle {
+                                        width: 26
+                                        height: 26
+                                        radius: 4
+                                        color: expInlHover.hovered ? "#44ffffff" : "transparent"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "⛶"
+                                            color: "#ffffff"
+                                            font.pixelSize: 13
+                                        }
+
+                                        HoverHandler { id: expInlHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: mediaBlockRoot.requestExpandVideo()
+                                        }
+                                    }
+
+                                    // Close inline player button
+                                    Rectangle {
+                                        width: 26
+                                        height: 26
+                                        radius: 4
+                                        color: closeInlHover.hovered ? "#44ffffff" : "transparent"
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "✕"
+                                            color: "#ffffff"
+                                            font.pixelSize: 12
+                                        }
+
+                                        HoverHandler { id: closeInlHover }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                inlinePlayer.stop()
+                                                if (msgRoot.inlineAudioUrl.length > 0) {
+                                                    inlineAudioPlayer.stop()
+                                                }
+                                                msgRoot.isInlinePlaying = false
+                                                msgRoot.inlineStreamUrl = ""
+                                                msgRoot.inlineAudioUrl = ""
+                                            }
                                         }
                                     }
                                 }
@@ -1191,6 +1224,7 @@ Item {
                         cursorVisible: false
                         activeFocusOnPress: true
                         text: {
+                            if (relayController.classic_mode) return ""
                             if (model.is_action) {
                                 return "<i>* " + model.styled_text + "</i>"
                             }
@@ -1218,9 +1252,14 @@ Item {
                         }
                     }
 
-                    // Shared Inline Media Preview
-                    MediaPreviewBlock {
+                    // Shared Inline Media Preview (Lazy-loaded only when row has media)
+                    Loader {
                         Layout.fillWidth: true
+                        active: !relayController.classic_mode && relayController.show_media_previews && (model.media_type === "image" || model.media_type === "youtube")
+                        visible: active
+                        sourceComponent: MediaPreviewBlock {
+                            width: parent ? parent.width : 0
+                        }
                     }
                 }
             }
@@ -1380,6 +1419,7 @@ Item {
                         cursorVisible: false
                         activeFocusOnPress: true
                         text: {
+                            if (!relayController.classic_mode) return ""
                             if (model.is_action) {
                                 var actPrefix = model.prefix_plain.length > 0 ? (model.prefix_plain + " ") : ""
                                 var bodyText = model.styled_text
@@ -1411,9 +1451,14 @@ Item {
                         }
                     }
 
-                    // Shared Inline Media Preview
-                    MediaPreviewBlock {
+                    // Shared Inline Media Preview (Lazy-loaded only when row has media)
+                    Loader {
                         Layout.fillWidth: true
+                        active: relayController.classic_mode && relayController.show_media_previews && (model.media_type === "image" || model.media_type === "youtube")
+                        visible: active
+                        sourceComponent: MediaPreviewBlock {
+                            width: parent ? parent.width : 0
+                        }
                     }
                 }
             }

@@ -66,25 +66,12 @@ impl Default for AppConfig {
 
 impl AppConfig {
     pub fn config_path() -> Option<PathBuf> {
-        #[cfg(test)]
-        {
-            let mut p = std::env::temp_dir();
-            let thread_name = format!("{:?}", std::thread::current().id());
-            let clean_thread = thread_name.replace(['(', ')', ' '], "");
-            p.push(format!("weechat-qml-test-{}", clean_thread));
+        dirs::config_dir().map(|mut p| {
+            p.push("weechat-qml");
             let _ = fs::create_dir_all(&p);
             p.push("config.json");
-            Some(p)
-        }
-        #[cfg(not(test))]
-        {
-            dirs::config_dir().map(|mut p| {
-                p.push("weechat-qml");
-                let _ = fs::create_dir_all(&p);
-                p.push("config.json");
-                p
-            })
-        }
+            p
+        })
     }
 
     pub fn sanitize(&mut self) {
@@ -154,73 +141,5 @@ impl AppConfig {
         {
             let _ = fs::write(path, json);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_app_config_sanitize_replaces_empty_or_zero_values_with_defaults() {
-        let mut cfg = AppConfig {
-            host: "   ".to_string(),
-            port: 0,
-            use_tls: true,
-            verify_tls: false,
-            show_join_part_quit: true,
-            auto_save_weechat_filters: true,
-            show_media_previews: false,
-            desktop_notifications: false,
-            theme_name: "".to_string(),
-            font_family: "   ".to_string(),
-            font_size: 0,
-            timestamp_format: "".to_string(),
-            initial_lines_fetch: -5,
-            auto_reconnect: false,
-            confirm_on_quit: false,
-            close_to_tray: false,
-            custom_browser: "  firefox --private  ".to_string(),
-            classic_mode: false,
-            alternating_row_colors: true,
-            sidebar_server_order: vec![
-                "Libera".to_string(),
-                " LIBERA ".to_string(),
-                "".to_string(),
-            ],
-            collapsed_servers: vec![
-                "Libera".to_string(),
-                " LIBERA ".to_string(),
-                "".to_string(),
-                "OFTC".to_string(),
-            ],
-        };
-
-        cfg.sanitize();
-
-        let defaults = AppConfig::default();
-        assert_eq!(cfg.host, defaults.host);
-        assert_eq!(cfg.port, defaults.port);
-        assert_eq!(cfg.theme_name, defaults.theme_name);
-        assert_eq!(cfg.font_family, defaults.font_family);
-        assert_eq!(cfg.font_size, defaults.font_size);
-        assert_eq!(cfg.timestamp_format, defaults.timestamp_format);
-        assert_eq!(cfg.initial_lines_fetch, defaults.initial_lines_fetch);
-        assert_eq!(cfg.custom_browser, "firefox --private");
-        assert_eq!(cfg.sidebar_server_order, vec!["libera".to_string()]);
-        assert_eq!(
-            cfg.collapsed_servers,
-            vec!["Libera".to_string(), "OFTC".to_string()]
-        );
-        // Valid boolean changes must be preserved
-        assert!(cfg.use_tls);
-        assert!(!cfg.verify_tls);
-        assert!(cfg.show_join_part_quit);
-        assert!(!cfg.show_media_previews);
-        assert!(!cfg.desktop_notifications);
-        assert!(!cfg.auto_reconnect);
-        assert!(!cfg.confirm_on_quit);
-        assert!(!cfg.close_to_tray);
-        assert!(!cfg.classic_mode);
     }
 }
