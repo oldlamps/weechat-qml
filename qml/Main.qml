@@ -324,6 +324,10 @@ ApplicationWindow {
         id: settingsDialog
         relayController: relay
         theme: appTheme
+        onOpenFilterManagerRequested: {
+            settingsDialog.visible = false
+            filterManagerModal.visible = true
+        }
     }
 
     // Event & Message Filter Manager Modal

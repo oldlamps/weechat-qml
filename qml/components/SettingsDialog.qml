@@ -13,6 +13,7 @@ Rectangle {
     property var theme
     property string savedCustomBrowser: ""
     property string themeFilter: "all" // "all", "dark", "light"
+    signal openFilterManagerRequested()
 
     MouseArea {
         anchors.fill: parent
@@ -732,40 +733,99 @@ Rectangle {
                             }
                         }
 
-                        // Join / Part / Quit Event Noise Filter Toggle
+                        // Event & Message Filters Link Card (WeeChat /filter Manager)
                         Rectangle {
                             Layout.fillWidth: true
-                            height: 48
+                            height: 54
                             radius: 8
-                            color: jpqHover.hovered ? theme.bgHover : theme.bgSecondary
-                            border.color: theme.borderSubtle
+                            color: filterCardHover.hovered ? theme.bgHover : theme.bgSecondary
+                            border.color: filterCardHover.hovered ? theme.borderFocus : theme.borderSubtle
+                            border.width: 1
 
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: 16
                                 anchors.rightMargin: 16
-                                spacing: 12
+                                spacing: 14
 
-                                Text {
-                                    text: "Show Join / Part / Quit Status Events by Default"
-                                    color: theme.textPrimary
-                                    font.pixelSize: 13
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    elide: Text.ElideRight
+                                Rectangle {
+                                    width: 34
+                                    height: 34
+                                    radius: 8
+                                    color: Qt.alpha(theme.accentCyan, 0.18)
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "🛡️"
+                                        font.pixelSize: 16
+                                    }
                                 }
 
-                                Switch {
-                                    id: jpqSwitch
-                                    checked: relayController.show_join_part_quit
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+
+                                    RowLayout {
+                                        spacing: 8
+                                        Text {
+                                            text: "Event & Message Filters"
+                                            color: theme.textPrimary
+                                            font.pixelSize: 13
+                                            font.bold: true
+                                        }
+
+                                        Rectangle {
+                                            height: 18
+                                            radius: 9
+                                            implicitWidth: filterBadgeTxt.implicitWidth + 12
+                                            color: relayController.active_filter_count > 0 ? Qt.alpha(theme.statusOnline, 0.15) : theme.bgElevated
+                                            border.color: relayController.active_filter_count > 0 ? Qt.alpha(theme.statusOnline, 0.5) : theme.borderSubtle
+                                            border.width: 1
+
+                                            Text {
+                                                id: filterBadgeTxt
+                                                anchors.centerIn: parent
+                                                text: relayController.active_filter_count + " Active"
+                                                color: relayController.active_filter_count > 0 ? theme.statusOnline : theme.textMuted
+                                                font.pixelSize: 10
+                                                font.bold: true
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: "Manage join/parts, lurker smart filters, muted nicks, and custom WeeChat rules"
+                                        color: theme.textSecondary
+                                        font.pixelSize: 11
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                Rectangle {
+                                    height: 28
+                                    radius: 6
+                                    implicitWidth: openFilterTxt.implicitWidth + 20
+                                    color: openFilterHover.hovered ? theme.accentHover : theme.accentPrimary
+
+                                    Text {
+                                        id: openFilterTxt
+                                        anchors.centerIn: parent
+                                        text: "Manage Filters →"
+                                        color: theme.bgPrimary
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                    }
+
+                                    HoverHandler { id: openFilterHover }
                                 }
                             }
 
-                            HoverHandler { id: jpqHover }
+                            HoverHandler { id: filterCardHover }
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: relayController.toggle_join_part_quit()
+                                onClicked: settingsModal.openFilterManagerRequested()
                             }
                         }
 
