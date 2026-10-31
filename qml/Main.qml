@@ -138,45 +138,77 @@ ApplicationWindow {
         }
     }
 
-    // Next / Previous Channel Shortcuts (Ctrl+Tab & Ctrl+Shift+Tab, Ctrl+PageDown & Ctrl+PageUp)
+    // Next / Previous Channel Shortcuts (Ctrl+Tab & Ctrl+Shift+Tab, Ctrl+PageDown & Ctrl+PageUp, Ctrl+Down & Ctrl+Up)
     Shortcut {
         sequence: "Ctrl+Tab"
+        enabled: !quickSwitcher.visible
         onActivated: relay.select_next_buffer()
     }
 
     Shortcut {
         sequence: "Ctrl+Shift+Tab"
+        enabled: !quickSwitcher.visible
         onActivated: relay.select_previous_buffer()
     }
 
     Shortcut {
         sequence: "Ctrl+Page_Down"
+        enabled: !quickSwitcher.visible
         onActivated: relay.select_next_buffer()
     }
 
     Shortcut {
         sequence: "Ctrl+Page_Up"
+        enabled: !quickSwitcher.visible
+        onActivated: relay.select_previous_buffer()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Down"
+        enabled: !quickSwitcher.visible
+        onActivated: relay.select_next_buffer()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Up"
+        enabled: !quickSwitcher.visible
+        onActivated: relay.select_previous_buffer()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+Down"
+        enabled: !quickSwitcher.visible
+        onActivated: relay.select_next_buffer()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+Up"
+        enabled: !quickSwitcher.visible
         onActivated: relay.select_previous_buffer()
     }
 
     // PageUp & PageDown when global focus is elsewhere
     Shortcut {
         sequence: "Page_Up"
+        enabled: !quickSwitcher.visible
         onActivated: messageListView.scrollPageUp()
     }
 
     Shortcut {
         sequence: "Page_Down"
+        enabled: !quickSwitcher.visible
         onActivated: messageListView.scrollPageDown()
     }
 
     Shortcut {
         sequence: "Home"
+        enabled: !quickSwitcher.visible
         onActivated: messageListView.scrollToTop()
     }
 
     Shortcut {
         sequence: "End"
+        enabled: !quickSwitcher.visible
         onActivated: messageListView.scrollToBottom()
     }
 
@@ -195,11 +227,13 @@ ApplicationWindow {
     // Next Unread Hotkeys (Ctrl+U and classic Alt+A)
     Shortcut {
         sequence: "Ctrl+U"
+        enabled: !quickSwitcher.visible
         onActivated: relay.select_next_unread_buffer()
     }
 
     Shortcut {
         sequence: "Alt+A"
+        enabled: !quickSwitcher.visible
         onActivated: relay.select_next_unread_buffer()
     }
 
@@ -210,16 +244,16 @@ ApplicationWindow {
     }
 
     // Numbered buffer quick jump shortcuts: Alt+1 through Alt+9
-    Shortcut { sequence: "Alt+1"; onActivated: relay.select_buffer_by_number(1) }
-    Shortcut { sequence: "Alt+2"; onActivated: relay.select_buffer_by_number(2) }
-    Shortcut { sequence: "Alt+3"; onActivated: relay.select_buffer_by_number(3) }
-    Shortcut { sequence: "Alt+4"; onActivated: relay.select_buffer_by_number(4) }
-    Shortcut { sequence: "Alt+5"; onActivated: relay.select_buffer_by_number(5) }
-    Shortcut { sequence: "Alt+6"; onActivated: relay.select_buffer_by_number(6) }
-    Shortcut { sequence: "Alt+7"; onActivated: relay.select_buffer_by_number(7) }
-    Shortcut { sequence: "Alt+8"; onActivated: relay.select_buffer_by_number(8) }
-    Shortcut { sequence: "Alt+9"; onActivated: relay.select_buffer_by_number(9) }
-    Shortcut { sequence: "Alt+0"; onActivated: relay.select_buffer_by_number(10) }
+    Shortcut { sequence: "Alt+1"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(1) }
+    Shortcut { sequence: "Alt+2"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(2) }
+    Shortcut { sequence: "Alt+3"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(3) }
+    Shortcut { sequence: "Alt+4"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(4) }
+    Shortcut { sequence: "Alt+5"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(5) }
+    Shortcut { sequence: "Alt+6"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(6) }
+    Shortcut { sequence: "Alt+7"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(7) }
+    Shortcut { sequence: "Alt+8"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(8) }
+    Shortcut { sequence: "Alt+9"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(9) }
+    Shortcut { sequence: "Alt+0"; enabled: !quickSwitcher.visible; onActivated: relay.select_buffer_by_number(10) }
 
     Shortcut {
         sequence: "Ctrl+F"

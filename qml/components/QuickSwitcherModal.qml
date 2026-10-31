@@ -16,11 +16,26 @@ Rectangle {
         switcherOverlay.visible = true
         queryInput.text = ""
         relayController.filter_buffers("")
-        switcherList.currentIndex = 0
+        var activeIdx = relayController.active_buffer_filtered_index()
+        if (activeIdx >= 0) {
+            switcherList.currentIndex = activeIdx
+            switcherList.positionViewAtIndex(activeIdx, ListView.Center)
+            Qt.callLater(function() {
+                if (switcherOverlay.visible) {
+                    switcherList.positionViewAtIndex(switcherList.currentIndex, ListView.Center)
+                }
+            })
+        } else {
+            switcherList.currentIndex = 0
+            if (switcherList.count > 0) {
+                switcherList.positionViewAtIndex(0, ListView.Beginning)
+            }
+        }
         queryInput.forceActiveFocus()
     }
 
     function closeModal() {
+        queryInput.text = ""
         relayController.filter_buffers("")
         switcherOverlay.visible = false
     }
@@ -94,7 +109,65 @@ Rectangle {
 
                         onTextChanged: {
                             relayController.filter_buffers(text)
+                            if (text.length === 0) {
+                                var activeIdx = relayController.active_buffer_filtered_index()
+                                if (activeIdx >= 0) {
+                                    switcherList.currentIndex = activeIdx
+                                    switcherList.positionViewAtIndex(activeIdx, ListView.Center)
+                                    return
+                                }
+                            }
                             switcherList.currentIndex = 0
+                            if (switcherList.count > 0) {
+                                switcherList.positionViewAtIndex(0, ListView.Beginning)
+                            }
+                        }
+
+                        Keys.onPressed: function(event) {
+                            if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                                if (event.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) {
+                                    event.accepted = true
+                                    if (event.key === Qt.Key_Down) {
+                                        if (switcherList.count > 0) {
+                                            if (switcherList.currentIndex < switcherList.count - 1) {
+                                                switcherList.currentIndex++
+                                            } else {
+                                                switcherList.currentIndex = 0
+                                            }
+                                            switcherList.positionViewAtIndex(switcherList.currentIndex, ListView.Contain)
+                                        }
+                                    } else {
+                                        if (switcherList.count > 0) {
+                                            if (switcherList.currentIndex > 0) {
+                                                switcherList.currentIndex--
+                                            } else {
+                                                switcherList.currentIndex = switcherList.count - 1
+                                            }
+                                            switcherList.positionViewAtIndex(switcherList.currentIndex, ListView.Contain)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Keys.onTabPressed: function(event) {
+                            event.accepted = true
+                            if (switcherList.count > 0) {
+                                if (event.modifiers & Qt.ShiftModifier) {
+                                    if (switcherList.currentIndex > 0) {
+                                        switcherList.currentIndex--
+                                    } else {
+                                        switcherList.currentIndex = switcherList.count - 1
+                                    }
+                                } else {
+                                    if (switcherList.currentIndex < switcherList.count - 1) {
+                                        switcherList.currentIndex++
+                                    } else {
+                                        switcherList.currentIndex = 0
+                                    }
+                                }
+                                switcherList.positionViewAtIndex(switcherList.currentIndex, ListView.Contain)
+                            }
                         }
 
                         Keys.onEscapePressed: function(event) {
@@ -104,16 +177,24 @@ Rectangle {
 
                         Keys.onDownPressed: function(event) {
                             event.accepted = true
-                            if (switcherList.count > 0 && switcherList.currentIndex < switcherList.count - 1) {
-                                switcherList.currentIndex++
+                            if (switcherList.count > 0) {
+                                if (switcherList.currentIndex < switcherList.count - 1) {
+                                    switcherList.currentIndex++
+                                } else {
+                                    switcherList.currentIndex = 0
+                                }
                                 switcherList.positionViewAtIndex(switcherList.currentIndex, ListView.Contain)
                             }
                         }
 
                         Keys.onUpPressed: function(event) {
                             event.accepted = true
-                            if (switcherList.count > 0 && switcherList.currentIndex > 0) {
-                                switcherList.currentIndex--
+                            if (switcherList.count > 0) {
+                                if (switcherList.currentIndex > 0) {
+                                    switcherList.currentIndex--
+                                } else {
+                                    switcherList.currentIndex = switcherList.count - 1
+                                }
                                 switcherList.positionViewAtIndex(switcherList.currentIndex, ListView.Contain)
                             }
                         }
@@ -280,6 +361,26 @@ Rectangle {
                                 text: model.server_name
                                 color: delegateItem.isSelected ? theme.accentCyan : theme.textMuted
                                 font.pixelSize: 11
+                            }
+
+                            // Current channel indicator badge
+                            Rectangle {
+                                visible: model.is_active
+                                height: 16
+                                implicitWidth: curText.implicitWidth + 8
+                                radius: 4
+                                color: delegateItem.isSelected ? Qt.alpha("#ffffff", 0.2) : Qt.alpha(theme.accentCyan, 0.15)
+                                border.color: delegateItem.isSelected ? Qt.alpha("#ffffff", 0.4) : Qt.alpha(theme.accentCyan, 0.35)
+                                border.width: 1
+
+                                Text {
+                                    id: curText
+                                    anchors.centerIn: parent
+                                    text: "current"
+                                    color: delegateItem.isSelected ? "#ffffff" : theme.accentCyan
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                }
                             }
 
                             // Title topic snippet

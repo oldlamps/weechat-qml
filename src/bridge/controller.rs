@@ -118,6 +118,7 @@ pub struct RelayController {
     pub select_previous_buffer: qt_method!(fn(&mut self)),
     pub select_buffer_by_number: qt_method!(fn(&mut self, number: i32)),
     pub select_buffer_by_filtered_index: qt_method!(fn(&mut self, index: i32) -> bool),
+    pub active_buffer_filtered_index: qt_method!(fn(&self) -> i32),
     pub send_input: qt_method!(fn(&mut self, text: QString)),
     pub load_more_history: qt_method!(fn(&mut self)),
     pub toggle_join_part_quit: qt_method!(fn(&mut self)),
@@ -413,6 +414,7 @@ impl Default for RelayController {
             select_previous_buffer: Default::default(),
             select_buffer_by_number: Default::default(),
             select_buffer_by_filtered_index: Default::default(),
+            active_buffer_filtered_index: Default::default(),
             send_input: Default::default(),
             load_more_history: Default::default(),
             toggle_join_part_quit: Default::default(),
@@ -804,9 +806,9 @@ impl RelayController {
                     self.select_buffer(active_norm.into());
                 }
 
-                // Queue background backlog pre-fetches for all non-active buffers after the active
-                // buffer's backlog and nicklist have been requested first, avoiding head-of-line
-                // blocking on the active buffer while keeping initial switches to other channels instant.
+                // Queue background backlog pre-fetches and nicklist fetches for all non-active buffers
+                // after the active buffer's backlog and nicklist have been requested first,
+                // ensuring all channels populate their user lists and history on startup.
                 let selected_norm = normalize_ptr(&self.active_buffer_ptr.to_string());
                 let fetch_count = (self.initial_lines_fetch as usize).clamp(50, 2000);
                 if let Some(tx) = &self.cmd_tx {
@@ -816,6 +818,16 @@ impl RelayController {
                                 buffer_ptr: b.ptr.clone(),
                                 count: fetch_count,
                             });
+                            let is_channel = b.buffer_type == "channel"
+                                || b.short_name.starts_with('#')
+                                || b.short_name.starts_with('&')
+                                || b.full_name.contains(".#")
+                                || b.full_name.contains(".&");
+                            if is_channel {
+                                let _ = tx.send(ClientCommand::RequestNicklist {
+                                    buffer_ptr: Some(b.ptr.clone()),
+                                });
+                            }
                         }
                     }
                 }
@@ -1921,12 +1933,25 @@ impl RelayController {
             });
 
             // If nicks are not yet cached or empty for a channel, request nicklist
+            let is_channel = self.active_buffer_type.to_string() == "channel"
+                || self
+                    .buffers_cache
+                    .iter()
+                    .find(|b| b.ptr == norm_ptr)
+                    .map(|b| {
+                        b.buffer_type == "channel"
+                            || b.short_name.starts_with('#')
+                            || b.short_name.starts_with('&')
+                            || b.full_name.contains(".#")
+                            || b.full_name.contains(".&")
+                    })
+                    .unwrap_or(false);
             let needs_nicks = self
                 .nicks_cache
                 .get(&norm_ptr)
                 .map(|n| n.is_empty())
                 .unwrap_or(true);
-            if needs_nicks && self.active_buffer_type.to_string() == "channel" {
+            if needs_nicks && is_channel {
                 let _ = tx.send(ClientCommand::RequestNicklist {
                     buffer_ptr: Some(norm_ptr.clone()),
                 });
@@ -2135,6 +2160,20 @@ impl RelayController {
         } else {
             false
         }
+    }
+
+    pub fn active_buffer_filtered_index(&self) -> i32 {
+        let active_ptr = normalize_ptr(&self.active_buffer_ptr.to_string());
+        if active_ptr.is_empty() {
+            return -1;
+        }
+        let model = self.buffer_model.borrow();
+        for (idx, item) in model.iter().enumerate() {
+            if item.is_active || normalize_ptr(&item.ptr.to_string()) == active_ptr {
+                return idx as i32;
+            }
+        }
+        -1
     }
 
     pub fn send_input(&mut self, text: QString) {

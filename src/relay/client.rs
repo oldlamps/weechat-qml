@@ -874,24 +874,37 @@ fn parse_nicklist_hdata(
 ) -> HashMap<String, Vec<RelayNick>> {
     let mut by_buffer: HashMap<String, Vec<RelayNick>> = HashMap::new();
     let mut current_group = String::new();
+    let mut last_buf = String::new();
 
     for item in &hda.items {
-        let raw_ptr = item.first_ptr();
-        let buf_ptr = if (raw_ptr == "0x0" || raw_ptr.is_empty())
-            && let Some(def_ptr) = default_buf_ptr
-        {
-            super::types::normalize_ptr(def_ptr)
+        let buf_ptr = if let Some(def_ptr) = default_buf_ptr {
+            if !def_ptr.is_empty() {
+                super::types::normalize_ptr(def_ptr)
+            } else {
+                super::types::normalize_ptr(item.first_ptr())
+            }
         } else {
-            super::types::normalize_ptr(raw_ptr)
+            super::types::normalize_ptr(item.first_ptr())
         };
+
+        if buf_ptr != last_buf {
+            last_buf = buf_ptr.clone();
+            current_group.clear();
+        }
+
         let is_group = item.get_i32("group") != 0;
-        let visible = item.get_i32("visible") != 0;
+        let visible = item
+            .values
+            .get("visible")
+            .and_then(|v| v.as_i32())
+            .map(|v| v != 0)
+            .unwrap_or(true);
         let name = item.get_str("name");
 
         if is_group {
             current_group = name;
             by_buffer.entry(buf_ptr).or_default();
-        } else if visible && !name.is_empty() {
+        } else if !name.is_empty() {
             let prefix = item.get_str("prefix");
             let color = item.get_str("color");
             by_buffer
@@ -914,12 +927,22 @@ fn parse_nicklist_hdata(
 fn parse_nicklist_diff_hdata(hda: &HdataObject) -> HashMap<String, Vec<RelayNickDiff>> {
     let mut by_buffer: HashMap<String, Vec<RelayNickDiff>> = HashMap::new();
     let mut current_group = String::new();
+    let mut last_buf = String::new();
 
     for item in &hda.items {
         let buf_ptr = super::types::normalize_ptr(item.first_ptr());
+        if buf_ptr != last_buf {
+            last_buf = buf_ptr.clone();
+            current_group.clear();
+        }
         let diff_op = item.get_char("_diff");
         let is_group = item.get_i32("group") != 0;
-        let visible = item.get_i32("visible") != 0;
+        let visible = item
+            .values
+            .get("visible")
+            .and_then(|v| v.as_i32())
+            .map(|v| v != 0)
+            .unwrap_or(true);
         let name = item.get_str("name");
 
         if diff_op == '^' || is_group {
@@ -931,10 +954,10 @@ fn parse_nicklist_diff_hdata(hda: &HdataObject) -> HashMap<String, Vec<RelayNick
                 .entry(buf_ptr.clone())
                 .or_default()
                 .push(RelayNickDiff {
-                    buffer_ptr: buf_ptr,
+                    buffer_ptr: buf_ptr.clone(),
                     diff_op,
                     nick: RelayNick {
-                        buffer_ptr: item.first_ptr().to_string(),
+                        buffer_ptr: buf_ptr,
                         group_name: current_group.clone(),
                         name,
                         prefix,

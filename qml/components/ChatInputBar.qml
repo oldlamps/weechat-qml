@@ -142,13 +142,13 @@ Rectangle {
                             inputRoot.quickSwitcherRequested()
                             return
                         }
-                        // Buffer navigation: Ctrl+PageDown / Ctrl+PageUp
-                        if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_PageDown) {
+                        // Buffer navigation: Ctrl+PageDown / Ctrl+PageUp, Ctrl+Down / Ctrl+Up
+                        if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_PageDown || event.key === Qt.Key_Down)) {
                             event.accepted = true
                             relayController.select_next_buffer()
                             return
                         }
-                        if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_PageUp) {
+                        if ((event.modifiers & Qt.ControlModifier) && (event.key === Qt.Key_PageUp || event.key === Qt.Key_Up)) {
                             event.accepted = true
                             relayController.select_previous_buffer()
                             return
@@ -170,6 +170,11 @@ Rectangle {
                     }
 
                     Keys.onUpPressed: function(event) {
+                        if (event.modifiers & Qt.ControlModifier) {
+                            event.accepted = true
+                            relayController.select_previous_buffer()
+                            return
+                        }
                         if (inputRoot.inputHistory.length > 0) {
                             event.accepted = true
                             if (inputRoot.historyIndex < inputRoot.inputHistory.length - 1) {
@@ -181,6 +186,11 @@ Rectangle {
                     }
 
                     Keys.onDownPressed: function(event) {
+                        if (event.modifiers & Qt.ControlModifier) {
+                            event.accepted = true
+                            relayController.select_next_buffer()
+                            return
+                        }
                         if (inputRoot.historyIndex > 0) {
                             event.accepted = true
                             inputRoot.historyIndex--
