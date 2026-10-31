@@ -9,7 +9,7 @@ Item {
     property var theme
     property bool bottomScrollPending: false
     signal mentionNickRequested(string nick)
-    signal expandMediaRequested(string mediaType, string mediaUrl, string streamUrl, string audioUrl, string title, real position, bool isPlaying)
+    signal expandMediaRequested(string mediaType, string mediaUrl, string streamUrl, string audioUrl, string title, real position, bool isPlaying, var inlineItem)
 
     // Method to page scroll up from input field or hotkeys
     function scrollPageUp() {
@@ -191,8 +191,8 @@ Item {
             onNickClicked: function(nick) {
                 feedRoot.mentionNickRequested(nick)
             }
-            onExpandMediaRequested: function(mediaType, mediaUrl, streamUrl, audioUrl, title, position, isPlaying) {
-                feedRoot.expandMediaRequested(mediaType, mediaUrl, streamUrl, audioUrl, title, position, isPlaying)
+            onExpandMediaRequested: function(mediaType, mediaUrl, streamUrl, audioUrl, title, position, isPlaying, inlineItem) {
+                feedRoot.expandMediaRequested(mediaType, mediaUrl, streamUrl, audioUrl, title, position, isPlaying, inlineItem)
             }
             onContextMenuRequested: function(targetEdit, selSnippet, plainText, senderNick, timeStr, linkUrl, isAction) {
                 messageContextMenu.targetEdit = targetEdit

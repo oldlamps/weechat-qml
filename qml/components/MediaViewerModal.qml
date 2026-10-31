@@ -26,6 +26,14 @@ Rectangle {
     property real imagePanX: 0
     property real imagePanY: 0
 
+    // Active inline delegate item being expanded (seamless continuous video handover)
+    property var activeInlineItem: null
+
+    readonly property var currentVideoPlayer: activeInlineItem ? activeInlineItem.inlinePlayer : modalPlayer
+    readonly property var currentAudioPlayer: activeInlineItem ? activeInlineItem.inlineAudioPlayer : modalAudioPlayer
+    readonly property var currentAudioOut: activeInlineItem ? activeInlineItem.primaryAudioOut : primaryAudioOut
+    readonly property var currentSeparateAudioOut: activeInlineItem ? activeInlineItem.separateAudioOut : separateAudioOut
+
     Connections {
         target: relayController
         function onMedia_stream_resolved(target_id, s_url, a_url) {
@@ -48,7 +56,12 @@ Rectangle {
         }
     }
 
-    function openMedia(type, mUrl, sUrl, aUrl, title, initialPos, shouldPlay) {
+    function openMedia(type, mUrl, sUrl, aUrl, title, initialPos, shouldPlay, inlineItem) {
+        if (activeInlineItem && activeInlineItem.inlinePlayer && activeInlineItem.videoOut) {
+            activeInlineItem.inlinePlayer.videoOutput = activeInlineItem.videoOut
+        }
+        activeInlineItem = (inlineItem && inlineItem.inlinePlayer) ? inlineItem : null
+
         mediaType = type
         mediaUrl = mUrl
         streamUrl = sUrl || ""
@@ -64,32 +77,51 @@ Rectangle {
         modalCard.forceActiveFocus()
 
         if (type === "youtube") {
-            if (streamUrl.length > 0) {
+            if (activeInlineItem) {
+                modalPlayer.videoOutput = null
+                activeInlineItem.inlinePlayer.videoOutput = modalVideoOut
                 isResolving = false
-                if (initialPos > 0) {
-                    modalPlayer.position = initialPos
-                    if (audioUrl.length > 0) modalAudioPlayer.position = initialPos
-                }
-                if (shouldPlay) {
-                    modalPlayer.play()
-                    if (audioUrl.length > 0) modalAudioPlayer.play()
+                if (shouldPlay && activeInlineItem.inlinePlayer.playbackState !== MediaPlayer.PlayingState) {
+                    activeInlineItem.inlinePlayer.play()
+                    if (audioUrl.length > 0 && activeInlineItem.inlineAudioPlayer) {
+                        activeInlineItem.inlineAudioPlayer.play()
+                    }
                 }
             } else {
-                isResolving = true
-                if (relayController) {
-                    relayController.resolve_media_stream(mediaUrl, "modal_viewer")
+                modalPlayer.videoOutput = modalVideoOut
+                if (streamUrl.length > 0) {
+                    isResolving = false
+                    if (initialPos > 0) {
+                        modalPlayer.position = initialPos
+                        if (audioUrl.length > 0) modalAudioPlayer.position = initialPos
+                    }
+                    if (shouldPlay) {
+                        modalPlayer.play()
+                        if (audioUrl.length > 0) modalAudioPlayer.play()
+                    }
+                } else {
+                    isResolving = true
+                    if (relayController) {
+                        relayController.resolve_media_stream(mediaUrl, "modal_viewer")
+                    }
                 }
             }
         }
     }
 
     function closeModal() {
-        if (modalPlayer.playbackState === MediaPlayer.PlayingState) {
-            modalPlayer.stop()
+        if (activeInlineItem && activeInlineItem.inlinePlayer && activeInlineItem.videoOut) {
+            activeInlineItem.inlinePlayer.videoOutput = activeInlineItem.videoOut
+            activeInlineItem = null
+        } else {
+            if (modalPlayer.playbackState === MediaPlayer.PlayingState) {
+                modalPlayer.stop()
+            }
+            if (modalAudioPlayer.playbackState === MediaPlayer.PlayingState) {
+                modalAudioPlayer.stop()
+            }
         }
-        if (modalAudioPlayer.playbackState === MediaPlayer.PlayingState) {
-            modalAudioPlayer.stop()
-        }
+        modalPlayer.videoOutput = modalVideoOut
         streamUrl = ""
         audioUrl = ""
         isResolving = false
@@ -150,33 +182,47 @@ Rectangle {
         Keys.onUpPressed: function(event) {
             if (modalRoot.mediaType === "youtube") {
                 event.accepted = true
-                primaryAudioOut.volume = Math.min(1.0, primaryAudioOut.volume + 0.1)
-                separateAudioOut.volume = primaryAudioOut.volume
+                if (modalRoot.currentAudioOut) {
+                    modalRoot.currentAudioOut.volume = Math.min(1.0, modalRoot.currentAudioOut.volume + 0.1)
+                    if (modalRoot.currentSeparateAudioOut) {
+                        modalRoot.currentSeparateAudioOut.volume = modalRoot.currentAudioOut.volume
+                    }
+                }
             }
         }
 
         Keys.onDownPressed: function(event) {
             if (modalRoot.mediaType === "youtube") {
                 event.accepted = true
-                primaryAudioOut.volume = Math.max(0.0, primaryAudioOut.volume - 0.1)
-                separateAudioOut.volume = primaryAudioOut.volume
+                if (modalRoot.currentAudioOut) {
+                    modalRoot.currentAudioOut.volume = Math.max(0.0, modalRoot.currentAudioOut.volume - 0.1)
+                    if (modalRoot.currentSeparateAudioOut) {
+                        modalRoot.currentSeparateAudioOut.volume = modalRoot.currentAudioOut.volume
+                    }
+                }
             }
         }
 
         function togglePlayback() {
-            if (modalPlayer.playbackState === MediaPlayer.PlayingState) {
-                modalPlayer.pause()
-                if (modalRoot.audioUrl.length > 0) modalAudioPlayer.pause()
+            var vPlayer = modalRoot.currentVideoPlayer
+            var aPlayer = modalRoot.currentAudioPlayer
+            if (!vPlayer) return
+            if (vPlayer.playbackState === MediaPlayer.PlayingState) {
+                vPlayer.pause()
+                if (modalRoot.audioUrl.length > 0 && aPlayer) aPlayer.pause()
             } else {
-                modalPlayer.play()
-                if (modalRoot.audioUrl.length > 0) modalAudioPlayer.play()
+                vPlayer.play()
+                if (modalRoot.audioUrl.length > 0 && aPlayer) aPlayer.play()
             }
         }
 
         function seekRelative(deltaMs) {
-            var newPos = Math.max(0, Math.min(modalPlayer.duration, modalPlayer.position + deltaMs))
-            modalPlayer.position = newPos
-            if (modalRoot.audioUrl.length > 0) modalAudioPlayer.position = newPos
+            var vPlayer = modalRoot.currentVideoPlayer
+            var aPlayer = modalRoot.currentAudioPlayer
+            if (!vPlayer) return
+            var newPos = Math.max(0, Math.min(vPlayer.duration, vPlayer.position + deltaMs))
+            vPlayer.position = newPos
+            if (modalRoot.audioUrl.length > 0 && aPlayer) aPlayer.position = newPos
         }
 
         // Prevent click-through
@@ -302,6 +348,8 @@ Rectangle {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 if (relayController) {
+                                    if (modalRoot.currentVideoPlayer) modalRoot.currentVideoPlayer.pause()
+                                    if (modalRoot.audioUrl.length > 0 && modalRoot.currentAudioPlayer) modalRoot.currentAudioPlayer.pause()
                                     relayController.play_with_mpv(modalRoot.mediaUrl)
                                 }
                             }
@@ -627,7 +675,7 @@ Rectangle {
                         id: modalPlayer
                         videoOutput: modalVideoOut
                         audioOutput: modalRoot.audioUrl.length === 0 ? primaryAudioOut : null
-                        source: modalRoot.streamUrl
+                        source: activeInlineItem ? "" : modalRoot.streamUrl
 
                         onPlaybackStateChanged: {
                             if (modalRoot.audioUrl.length > 0) {
@@ -663,7 +711,7 @@ Rectangle {
                     MediaPlayer {
                         id: modalAudioPlayer
                         audioOutput: separateAudioOut
-                        source: modalRoot.audioUrl
+                        source: activeInlineItem ? "" : modalRoot.audioUrl
                     }
 
                     AudioOutput {
@@ -692,7 +740,7 @@ Rectangle {
                         radius: 36
                         anchors.centerIn: parent
                         color: "#bb000000"
-                        visible: modalPlayer.playbackState !== MediaPlayer.PlayingState && !modalRoot.isResolving && modalRoot.resolveError.length === 0
+                        visible: modalRoot.currentVideoPlayer && modalRoot.currentVideoPlayer.playbackState !== MediaPlayer.PlayingState && !modalRoot.isResolving && modalRoot.resolveError.length === 0
 
                         Text {
                             anchors.centerIn: parent
@@ -810,8 +858,8 @@ Rectangle {
 
                                 Text {
                                     anchors.centerIn: parent
-                                    anchors.horizontalCenterOffset: modalPlayer.playbackState === MediaPlayer.PlayingState ? 0 : 1
-                                    text: modalPlayer.playbackState === MediaPlayer.PlayingState ? "⏸" : "▶"
+                                    anchors.horizontalCenterOffset: (modalRoot.currentVideoPlayer && modalRoot.currentVideoPlayer.playbackState === MediaPlayer.PlayingState) ? 0 : 1
+                                    text: (modalRoot.currentVideoPlayer && modalRoot.currentVideoPlayer.playbackState === MediaPlayer.PlayingState) ? "⏸" : "▶"
                                     color: "#ffffff"
                                     font.pixelSize: 16
                                 }
@@ -829,12 +877,14 @@ Rectangle {
                                 id: progressSlider
                                 Layout.fillWidth: true
                                 from: 0
-                                to: Math.max(1, modalPlayer.duration)
-                                value: modalPlayer.position
+                                to: Math.max(1, modalRoot.currentVideoPlayer ? modalRoot.currentVideoPlayer.duration : 1)
+                                value: modalRoot.currentVideoPlayer ? modalRoot.currentVideoPlayer.position : 0
                                 onMoved: {
-                                    modalPlayer.position = value
-                                    if (modalRoot.audioUrl.length > 0) {
-                                        modalAudioPlayer.position = value
+                                    if (modalRoot.currentVideoPlayer) {
+                                        modalRoot.currentVideoPlayer.position = value
+                                    }
+                                    if (modalRoot.audioUrl.length > 0 && modalRoot.currentAudioPlayer) {
+                                        modalRoot.currentAudioPlayer.position = value
                                     }
                                 }
                             }
@@ -842,8 +892,11 @@ Rectangle {
                             // Timestamp Label
                             Text {
                                 text: {
-                                    var curS = Math.floor(modalPlayer.position / 1000)
-                                    var totS = Math.floor(modalPlayer.duration / 1000)
+                                    var vPlayer = modalRoot.currentVideoPlayer
+                                    var pos = vPlayer ? vPlayer.position : 0
+                                    var dur = vPlayer ? vPlayer.duration : 0
+                                    var curS = Math.floor(pos / 1000)
+                                    var totS = Math.floor(dur / 1000)
                                     var curM = Math.floor(curS / 60)
                                     var totM = Math.floor(totS / 60)
                                     return curM + ":" + (curS % 60 < 10 ? "0" : "") + (curS % 60) + " / " + totM + ":" + (totS % 60 < 10 ? "0" : "") + (totS % 60)
@@ -862,7 +915,11 @@ Rectangle {
 
                                 Text {
                                     anchors.centerIn: parent
-                                    text: primaryAudioOut.muted || primaryAudioOut.volume === 0 ? "🔇" : (primaryAudioOut.volume < 0.5 ? "🔉" : "🔊")
+                                    text: {
+                                        var aOut = modalRoot.currentAudioOut
+                                        if (!aOut) return "🔊"
+                                        return aOut.muted || aOut.volume === 0 ? "🔇" : (aOut.volume < 0.5 ? "🔉" : "🔊")
+                                    }
                                     color: "#ffffff"
                                     font.pixelSize: 15
                                 }
@@ -872,8 +929,12 @@ Rectangle {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        primaryAudioOut.muted = !primaryAudioOut.muted
-                                        separateAudioOut.muted = primaryAudioOut.muted
+                                        var aOut = modalRoot.currentAudioOut
+                                        var sOut = modalRoot.currentSeparateAudioOut
+                                        if (aOut) {
+                                            aOut.muted = !aOut.muted
+                                            if (sOut) sOut.muted = aOut.muted
+                                        }
                                     }
                                 }
                             }
@@ -883,12 +944,18 @@ Rectangle {
                                 Layout.preferredWidth: 84
                                 from: 0.0
                                 to: 1.0
-                                value: primaryAudioOut.volume
+                                value: modalRoot.currentAudioOut ? modalRoot.currentAudioOut.volume : 1.0
                                 onMoved: {
-                                    primaryAudioOut.muted = false
-                                    separateAudioOut.muted = false
-                                    primaryAudioOut.volume = value
-                                    separateAudioOut.volume = value
+                                    var aOut = modalRoot.currentAudioOut
+                                    var sOut = modalRoot.currentSeparateAudioOut
+                                    if (aOut) {
+                                        aOut.muted = false
+                                        aOut.volume = value
+                                    }
+                                    if (sOut) {
+                                        sOut.muted = false
+                                        sOut.volume = value
+                                    }
                                 }
                             }
                         }

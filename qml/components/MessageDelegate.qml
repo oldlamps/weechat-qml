@@ -21,7 +21,7 @@ Item {
     property string resolvedImageUrl: ""
     signal nickClicked(string nick)
     signal contextMenuRequested(var targetEdit, string selectedText, string plainText, string senderNick, string timeStr, string linkUrl, bool isAction)
-    signal expandMediaRequested(string mediaType, string mediaUrl, string streamUrl, string audioUrl, string title, real position, bool isPlaying)
+    signal expandMediaRequested(string mediaType, string mediaUrl, string streamUrl, string audioUrl, string title, real position, bool isPlaying, var inlineItem)
 
     function fetchMediaMetadata() {
         if (model.media_type === "youtube" && model.media_url.length > 0 && msgRoot.ytTitle.length === 0) {
@@ -99,7 +99,8 @@ Item {
                     "",
                     finalImg,
                     0,
-                    false
+                    false,
+                    null
                 )
             }
         }
@@ -108,7 +109,7 @@ Item {
             if (msgRoot.inlineStreamUrl.length > 0 && inlinePlayerLoader.item) {
                 var wasPlaying = inlinePlayerLoader.item.isPlaying
                 var pos = inlinePlayerLoader.item.currentPosition
-                inlinePlayerLoader.item.pausePlayback()
+                // Do not pause playback here so videoOutput can smoothly transfer to modal
                 msgRoot.expandMediaRequested(
                     "youtube",
                     model.media_url,
@@ -116,7 +117,8 @@ Item {
                     msgRoot.inlineAudioUrl,
                     msgRoot.ytTitle.length > 0 ? msgRoot.ytTitle : model.media_url,
                     pos,
-                    wasPlaying
+                    wasPlaying,
+                    inlinePlayerLoader.item
                 )
             } else {
                 msgRoot.expandMediaRequested(
@@ -126,7 +128,8 @@ Item {
                     "",
                     msgRoot.ytTitle.length > 0 ? msgRoot.ytTitle : model.media_url,
                     0,
-                    true
+                    true,
+                    null
                 )
             }
         }
@@ -577,6 +580,12 @@ Item {
                             readonly property bool isPlaying: inlinePlayer.playbackState === MediaPlayer.PlayingState
                             readonly property real currentPosition: inlinePlayer.position
 
+                            property alias inlinePlayer: inlinePlayer
+                            property alias inlineAudioPlayer: inlineAudioPlayer
+                            property alias videoOut: videoOut
+                            property alias primaryAudioOut: primaryAudioOut
+                            property alias separateAudioOut: separateAudioOut
+
                             function pausePlayback() {
                                 inlinePlayer.pause()
                                 if (msgRoot.inlineAudioUrl.length > 0) inlineAudioPlayer.pause()
@@ -624,6 +633,7 @@ Item {
 
                             AudioOutput {
                                 id: primaryAudioOut
+                                volume: 1.0
                             }
 
                             // Secondary audio player for YouTube DASH streams
@@ -635,6 +645,8 @@ Item {
 
                             AudioOutput {
                                 id: separateAudioOut
+                                volume: primaryAudioOut.volume
+                                muted: primaryAudioOut.muted
                             }
 
                             VideoOutput {
